@@ -6,6 +6,7 @@ the same interface as the Azure OpenAI client for seamless integration.
 For ConnectChain documentation, see: https://github.com/americanexpress/connectchain
 """
 
+import asyncio
 from typing import Optional, Dict, Any, List
 from connectchain.orchestrators import PortableOrchestrator
 from langchain.prompts import PromptTemplate
@@ -177,8 +178,16 @@ class ResilientConnectChain:
                     input_variables=["prompt"],
                 )
 
-                # Make the API call
-                response = orchestrator.run(prompt_text)
+                # Make the API call (run is async, so we need to await it)
+                # Use asyncio to run the async function in a synchronous context
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    # No event loop in current thread, create a new one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                response = loop.run_until_complete(orchestrator.run(prompt_text))
 
                 # ConnectChain returns the response directly as a string
                 content = response if isinstance(response, str) else str(response)
