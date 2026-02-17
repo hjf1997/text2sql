@@ -348,23 +348,18 @@ result = agent.query_with_correction(
 ### Environment Variables
 
 ```bash
-# LLM Provider (ConnectChain recommended for AMEX enterprise)
-USE_CONNECTCHAIN=true  # or false for direct Azure OpenAI
+# Enterprise Proxy Configuration (REQUIRED for enterprise environment)
+HTTP_PROXY=http://your-proxy-server:port
+HTTPS_PROXY=https://your-proxy-server:port
+
+# ConnectChain Configuration (AMEX Enterprise Framework - REQUIRED)
+CONFIG_PATH=connectchain.config.yml
+WORKDIR=.
 
 # Required
 SCHEMA_DIRECTORY=/path/to/schema_directory
 GCP_PROJECT_ID=...
 BIGQUERY_DATASET=...
-
-# For ConnectChain (when USE_CONNECTCHAIN=true)
-CONFIG_PATH=connectchain.config.yml
-WORKDIR=.
-AZURE_OPENAI_ENDPOINT=https://...
-
-# For Direct Azure OpenAI (when USE_CONNECTCHAIN=false)
-AZURE_OPENAI_ENDPOINT=https://...
-AZURE_OPENAI_API_KEY=...
-AZURE_OPENAI_DEPLOYMENT=gpt-4
 
 # Optional
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/creds.json
@@ -372,7 +367,7 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/creds.json
 
 ### ConnectChain Configuration
 
-**For AMEX enterprise deployment**, ConnectChain is recommended. It provides:
+**ConnectChain is REQUIRED** for all LLM interactions in the enterprise environment. It provides:
 - ✅ EAS (Enterprise Auth Service) integration
 - ✅ Proxy configuration support
 - ✅ Certificate management
@@ -384,8 +379,9 @@ See **[CONNECTCHAIN_SETUP.md](CONNECTCHAIN_SETUP.md)** for detailed setup instru
 Edit `src/config/config.yaml`:
 
 ```yaml
-llm:
-  use_connectchain: true  # Enable ConnectChain
+connectchain:
+  config_path: "connectchain.config.yml"
+  model_index: "1"
 
 connectchain:
   config_path: "connectchain.config.yml"

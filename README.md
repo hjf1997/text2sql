@@ -263,9 +263,10 @@ Edit `src/config/config.yaml` to customize:
 
 ### Environment Variables
 Environment variables override YAML settings:
-- `AZURE_OPENAI_*`: Azure OpenAI settings
+- `CONFIG_PATH`: ConnectChain configuration file path
+- `HTTP_PROXY`, `HTTPS_PROXY`: Enterprise proxy settings
 - `GCP_PROJECT_ID`, `BIGQUERY_DATASET`: BigQuery settings
-- `SCHEMA_EXCEL_PATH`: Schema file path
+- `SCHEMA_DIRECTORY`: Schema directory path
 
 ## Advanced Usage
 

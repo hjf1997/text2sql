@@ -283,7 +283,7 @@ def main():
 
     # Check configuration
     try:
-        settings.get("azure_openai.endpoint")
+        settings.get("connectchain.config_path")
         settings.get("bigquery.project_id")
         config_ok = True
     except ValueError:
@@ -293,8 +293,8 @@ def main():
         print("\n⚠️  Configuration incomplete")
         print("\nTo run these demos:")
         print("1. Configure .env file with:")
-        print("   - AZURE_OPENAI_ENDPOINT")
-        print("   - AZURE_OPENAI_API_KEY")
+        print("   - CONFIG_PATH (ConnectChain configuration)")
+        print("   - HTTP_PROXY and HTTPS_PROXY (enterprise proxy)")
         print("   - GCP_PROJECT_ID")
         print("   - BIGQUERY_DATASET")
         print("   - SCHEMA_DIRECTORY")

@@ -103,7 +103,7 @@ This document describes the architecture and design decisions for the Text-to-SQ
 **Key Features**:
 - Environment variable overrides
 - Validation of required settings
-- Dot-notation access (`settings.get("azure_openai.endpoint")`)
+- Dot-notation access (`settings.get("connectchain.config_path")`)
 
 **Design Decision**: Singleton pattern ensures consistent configuration across the application.
 

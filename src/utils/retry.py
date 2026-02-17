@@ -44,7 +44,7 @@ class RetryConfig:
         self.fatal_exceptions = fatal_exceptions
 
     @classmethod
-    def from_settings(cls, section: str = "azure_openai.retry") -> 'RetryConfig':
+    def from_settings(cls, section: str = "connectchain.retry") -> 'RetryConfig':
         """Create retry config from settings.
 
         Args:

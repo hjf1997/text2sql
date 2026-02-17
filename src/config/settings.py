@@ -45,13 +45,9 @@ class Settings:
 
     def _apply_env_overrides(self) -> None:
         """Override configuration with environment variables."""
-        # Azure OpenAI overrides
-        if endpoint := os.getenv("AZURE_OPENAI_ENDPOINT"):
-            self._config.setdefault("azure_openai", {})["endpoint"] = endpoint
-        if api_key := os.getenv("AZURE_OPENAI_API_KEY"):
-            self._config.setdefault("azure_openai", {})["api_key"] = api_key
-        if deployment := os.getenv("AZURE_OPENAI_DEPLOYMENT"):
-            self._config.setdefault("azure_openai", {})["deployment_name"] = deployment
+        # ConnectChain overrides
+        if config_path := os.getenv("CONFIG_PATH"):
+            self._config.setdefault("connectchain", {})["config_path"] = config_path
 
         # BigQuery overrides
         if project_id := os.getenv("GCP_PROJECT_ID"):
@@ -68,8 +64,7 @@ class Settings:
     def _validate_config(self) -> None:
         """Validate that required configuration is present."""
         required_fields = [
-            ("azure_openai.endpoint", "AZURE_OPENAI_ENDPOINT"),
-            ("azure_openai.api_key", "AZURE_OPENAI_API_KEY"),
+            ("connectchain.config_path", "CONFIG_PATH"),
             ("bigquery.project_id", "GCP_PROJECT_ID"),
             ("bigquery.dataset", "BIGQUERY_DATASET"),
         ]
@@ -86,7 +81,7 @@ class Settings:
             )
 
     def get(self, key_path: str, default: Any = None) -> Any:
-        """Get configuration value using dot notation (e.g., 'azure_openai.endpoint').
+        """Get configuration value using dot notation (e.g., 'connectchain.config_path').
 
         Args:
             key_path: Dot-separated path to configuration value
@@ -112,7 +107,7 @@ class Settings:
         """Get an entire configuration section.
 
         Args:
-            section: Top-level section name (e.g., 'azure_openai')
+            section: Top-level section name (e.g., 'connectchain', 'bigquery')
 
         Returns:
             Dictionary containing the section configuration
@@ -139,9 +134,9 @@ class Settings:
         self._initialize()
 
     @property
-    def azure_openai(self) -> Dict[str, Any]:
-        """Get Azure OpenAI configuration."""
-        return self.get_section("azure_openai")
+    def connectchain(self) -> Dict[str, Any]:
+        """Get ConnectChain configuration."""
+        return self.get_section("connectchain")
 
     @property
     def bigquery(self) -> Dict[str, Any]:
