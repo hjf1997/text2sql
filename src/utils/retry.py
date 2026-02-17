@@ -53,12 +53,34 @@ class RetryConfig:
         Returns:
             RetryConfig instance
         """
+        # Get values with type conversion to ensure correct types
+        max_attempts = settings.get(f"{section}.max_attempts", 5)
+        base_delay = settings.get(f"{section}.base_delay", 2.0)
+        max_delay = settings.get(f"{section}.max_delay", 60.0)
+        multiplier = settings.get(f"{section}.multiplier", 2.0)
+        jitter = settings.get(f"{section}.jitter", True)
+
+        # Convert to proper types (in case YAML loads them as strings)
+        try:
+            max_attempts = int(max_attempts)
+            base_delay = float(base_delay)
+            max_delay = float(max_delay)
+            multiplier = float(multiplier)
+            jitter = bool(jitter) if not isinstance(jitter, bool) else jitter
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to convert retry config values: {e}. Using defaults.")
+            max_attempts = 5
+            base_delay = 2.0
+            max_delay = 60.0
+            multiplier = 2.0
+            jitter = True
+
         return cls(
-            max_attempts=settings.get(f"{section}.max_attempts", 5),
-            base_delay=settings.get(f"{section}.base_delay", 2.0),
-            max_delay=settings.get(f"{section}.max_delay", 60.0),
-            multiplier=settings.get(f"{section}.multiplier", 2.0),
-            jitter=settings.get(f"{section}.jitter", True),
+            max_attempts=max_attempts,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            multiplier=multiplier,
+            jitter=jitter,
         )
 
     def calculate_delay(self, attempt: int) -> float:
@@ -197,7 +219,18 @@ class RetryContext:
             config: Retry configuration
             operation_name: Name of the operation for logging
         """
-        self.config = config or RetryConfig.from_settings()
+        # Ensure config is a RetryConfig object, not a string or other type
+        if config is None:
+            self.config = RetryConfig.from_settings()
+        elif isinstance(config, RetryConfig):
+            self.config = config
+        else:
+            # If config is not the right type, log warning and use defaults
+            logger.warning(
+                f"Invalid retry config type: {type(config)}. Using default configuration."
+            )
+            self.config = RetryConfig.from_settings()
+
         self.operation_name = operation_name
         self.attempt = 0
         self.last_exception: Optional[Exception] = None

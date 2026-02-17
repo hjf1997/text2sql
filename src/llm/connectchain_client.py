@@ -55,8 +55,17 @@ class ResilientConnectChain:
         self.temperature = connectchain_config.get("temperature", 0.0)
         self.max_tokens = connectchain_config.get("max_tokens", 4000)
 
-        # Retry configuration
-        self.retry_config = retry_config or RetryConfig.from_settings()
+        # Retry configuration - ensure it's a RetryConfig object
+        if retry_config is None:
+            self.retry_config = RetryConfig.from_settings()
+        elif isinstance(retry_config, RetryConfig):
+            self.retry_config = retry_config
+        else:
+            logger.warning(
+                f"Invalid retry_config type: {type(retry_config)}. Using default configuration."
+            )
+            self.retry_config = RetryConfig.from_settings()
+
         self.checkpoint_before_call = checkpoint_before_call
 
         logger.info(
