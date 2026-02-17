@@ -3,7 +3,7 @@
 import re
 from typing import List, Dict, Optional
 from ..schema import Schema, JoinCandidate
-from ..llm import azure_client, PromptTemplates
+from ..llm import llm_client, PromptTemplates
 from ..core import Session
 from ..memory import TableMapper, lesson_repository
 from ..utils import setup_logger, ValidationError
@@ -85,7 +85,7 @@ class SQLGenerator:
         )
 
         # Get LLM response
-        response = azure_client.chat_completion(
+        response = llm_client.chat_completion(
             messages=[
                 {"role": "system", "content": PromptTemplates.system_message()},
                 {"role": "user", "content": prompt},
@@ -169,7 +169,7 @@ class SQLGenerator:
         )
 
         # Get LLM response
-        response = azure_client.chat_completion(
+        response = llm_client.chat_completion(
             messages=[
                 {"role": "system", "content": PromptTemplates.system_message()},
                 {"role": "user", "content": prompt},

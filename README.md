@@ -1,6 +1,6 @@
 # Text-to-SQL Agent
 
-A production-ready, enterprise-grade system for converting natural language queries to SQL using Azure OpenAI (or ConnectChain) and Google BigQuery.
+A production-ready, enterprise-grade system for converting natural language queries to SQL using ConnectChain (AMEX enterprise AI framework) and Google BigQuery.
 
 ## Features
 
@@ -13,8 +13,7 @@ A production-ready, enterprise-grade system for converting natural language quer
 - **Error Recovery**: Automatic retry with exponential backoff for API failures
 
 ### Enterprise Features
-- **LLM Integration**: Support for both Azure OpenAI and **ConnectChain** (AMEX enterprise framework)
-- **ConnectChain Support**: EAS authentication, proxy config, and certificate management
+- **LLM Integration**: **ConnectChain** (AMEX enterprise framework) - EAS authentication, proxy config, and certificate management
 - **Retry Logic**: Production-ready with exponential backoff and checkpointing
 - **BigQuery Support**: Optimized for Google BigQuery with cost estimation
 - **Schema Management**: Load table/column metadata from Excel files
@@ -30,7 +29,7 @@ text2sql/
 │   ├── config/          # Configuration management
 │   ├── core/            # Session and state machine
 │   ├── schema/          # Schema parsing and management
-│   ├── llm/             # Azure OpenAI client with retry
+│   ├── llm/             # ConnectChain client with retry
 │   ├── database/        # BigQuery client
 │   ├── reasoning/       # Join inference and query understanding
 │   ├── correction/      # User correction parsing
@@ -46,7 +45,7 @@ text2sql/
 
 ### Prerequisites
 - Python 3.9+
-- Azure OpenAI API access
+- ConnectChain configuration (for LLM access in enterprise environment)
 - Google Cloud Platform account with BigQuery enabled
 - Service account with BigQuery read permissions
 
@@ -80,23 +79,23 @@ cp .env.example .env
 ```
 
 Required environment variables:
-- `USE_CONNECTCHAIN`: Set to `true` for ConnectChain, `false` for direct Azure OpenAI (default: `true`)
-- `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
-- `AZURE_OPENAI_API_KEY`: Your Azure OpenAI API key (if not using ConnectChain)
-- `AZURE_OPENAI_DEPLOYMENT`: Deployment name (e.g., gpt-4)
+- `HTTP_PROXY`: Enterprise proxy server (required for corporate network)
+- `HTTPS_PROXY`: Enterprise HTTPS proxy server
+- `CONFIG_PATH`: Path to ConnectChain configuration file (default: `connectchain.config.yml`)
+- `WORKDIR`: Working directory for ConnectChain (default: `.`)
 - `GCP_PROJECT_ID`: Your GCP project ID
 - `BIGQUERY_DATASET`: Your BigQuery dataset name
 - `GOOGLE_APPLICATION_CREDENTIALS`: Path to service account JSON
 - `SCHEMA_DIRECTORY`: Path to directory containing schema Excel files
 
-### ConnectChain Setup (Recommended for AMEX Enterprise)
+### ConnectChain Setup (AMEX Enterprise - REQUIRED)
 
-If you're deploying in the AMEX enterprise environment, use **ConnectChain** for enterprise-grade LLM access:
+The system uses **ConnectChain** for all LLM interactions in the enterprise environment:
 
-1. The system is pre-configured to use ConnectChain (`USE_CONNECTCHAIN=true` in `.env`)
-2. Configure `connectchain.config.yml` with your model settings
+1. Configure `connectchain.config.yml` with your model settings
+2. Add proxy configuration to `.env` (HTTP_PROXY, HTTPS_PROXY)
 3. Add EAS credentials if required (see [CONNECTCHAIN_SETUP.md](CONNECTCHAIN_SETUP.md))
-4. No code changes needed - same API!
+4. The system automatically uses ConnectChain - no code changes needed!
 
 For detailed ConnectChain setup instructions, see **[CONNECTCHAIN_SETUP.md](CONNECTCHAIN_SETUP.md)**
 
@@ -151,7 +150,7 @@ Column-level metadata with these columns:
 ### Basic Usage
 
 ```python
-from src import schema_loader, bigquery_client, azure_client, JoinInference
+from src import schema_loader, bigquery_client, llm_client, JoinInference
 from src.reasoning.join_inference import JoinInference
 
 # 1. Load schema from directory (one Excel file per table)

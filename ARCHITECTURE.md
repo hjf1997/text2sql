@@ -38,18 +38,18 @@ This document describes the architecture and design decisions for the Text-to-SQ
             ┌──────────────────────────────┐
             │     LLM Client (Multi-       │
             │     Provider Support)        │
-            └────────┬──────────┬──────────┘
-                     │          │
-                     ▼          ▼
-            ┌─────────────┐ ┌───────────────┐
-            │ ConnectChain│ │Azure OpenAI   │
-            │  (EAS/Proxy)│ │  (Direct)     │
-            └─────────────┘ └───────────────┘
-                     │          │
-                     └────┬─────┘
-                          ▼
+            └────────┬──────────────────────┘
+                     │
+                     ▼
+            ┌──────────────────────┐
+            │    ConnectChain      │
+            │  (EAS/Proxy/Certs)   │
+            │ AMEX Enterprise Only │
+            └──────────────────────┘
+                     │
+                     ▼
                  ┌─────────────────┐
-                 │ Azure OpenAI API│
+                 │   LLM Backend   │
                  └─────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -83,11 +83,10 @@ This document describes the architecture and design decisions for the Text-to-SQ
 9. Orchestrator → Memory System: Learn patterns from session
 10. Orchestrator → User: Return SQL + results
 
-**LLM Provider Selection**:
-- Configuration flag: `llm.use_connectchain`
-- ConnectChain: Enterprise (EAS, proxy, certificates)
-- Azure OpenAI: Direct API access
-- Same interface for both providers
+**LLM Provider**:
+- ConnectChain (AMEX enterprise framework) - REQUIRED
+- Provides: EAS authentication, proxy support, certificate management
+- Configuration: `connectchain.config.yml`
 
 ---
 
@@ -190,23 +189,17 @@ Excel File → ExcelSchemaParser → Schema Objects → SchemaLoader (with cachi
 
 ### 4. LLM Integration Layer (`src/llm/`)
 
-#### Multi-Provider Support
+#### ConnectChain (Enterprise LLM Access - REQUIRED)
 
-The system supports two LLM providers:
-1. **Direct Azure OpenAI** - For direct API access
-2. **ConnectChain** - AMEX enterprise framework with EAS, proxy, and certificate support
-
-**Provider Selection**: Automatic based on configuration (`llm.use_connectchain`)
-
-#### Azure OpenAI Client (`azure_client.py`)
-
-**Purpose**: Resilient LLM API calls with retry logic
+The system uses **ConnectChain** (AMEX enterprise framework) for all LLM interactions.
 
 **Key Features**:
+- EAS (Enterprise Auth Service) integration
+- Proxy configuration support for corporate networks
+- Certificate management
 - Automatic retry with exponential backoff
 - Session checkpointing before/after calls
 - Recoverable vs. fatal error distinction
-- Recovery instructions on failure
 
 **Retry Strategy**:
 ```
@@ -218,33 +211,24 @@ Attempt 5: 16s + jitter
 Max: 60s
 ```
 
-**Design Decision**: Tight integration with session management enables seamless resume after API failures.
-
 #### ConnectChain Client (`connectchain_client.py`)
 
 **Purpose**: Enterprise-grade LLM access via ConnectChain framework
 
-**Key Features**:
-- EAS (Enterprise Auth Service) integration
-- Proxy configuration support
-- Certificate management
-- Same interface as Azure OpenAI client (seamless switching)
-- Built-in retry logic and session management
-
 **Architecture**:
 ```
-Application → ResilientConnectChain → PortableOrchestrator → Azure OpenAI
+Application → ResilientConnectChain → PortableOrchestrator → LLM Backend
 ```
 
-**Design Decision**: Wrapper maintains identical interface, enabling transparent provider switching.
+**Design Decision**: Tight integration with session management enables seamless resume after API failures.
 
-#### LLM Client Selection (`__init__.py`)
+#### LLM Client Interface (`__init__.py`)
 
-**Purpose**: Automatically select LLM provider based on configuration
+**Purpose**: Provide unified interface for LLM access
 
 **Interface**:
 ```python
-llm_client = get_llm_client()  # Returns ConnectChain or Azure client
+llm_client = connectchain_client  # ConnectChain is the only provider
 response = llm_client.chat_completion(messages, session)
 ```
 
@@ -1372,7 +1356,7 @@ This architecture balances:
 **Key Achievements**:
 - ✅ **Fully Automated**: No manual steps required
 - ✅ **Enterprise-Ready**: ConnectChain integration with EAS/proxy/certs
-- ✅ **Provider-Agnostic**: Transparent switching between LLM providers
+- ✅ **Secure**: All LLM access through enterprise ConnectChain framework
 - ✅ **Intelligent**: LLM-powered understanding and generation
 - ✅ **Self-Learning**: Cross-session memory learns from past queries
 - ✅ **Resilient**: Comprehensive error handling and recovery

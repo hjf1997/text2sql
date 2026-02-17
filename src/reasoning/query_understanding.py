@@ -4,7 +4,7 @@ import json
 import re
 from typing import List, Dict, Optional
 from ..schema import Schema
-from ..llm import azure_client, PromptTemplates
+from ..llm import llm_client, PromptTemplates
 from ..core import Session
 from ..utils import setup_logger
 
@@ -48,7 +48,7 @@ class QueryUnderstanding:
         prompt = PromptTemplates.query_understanding(user_query, self.schema)
 
         # Get LLM analysis
-        response = azure_client.chat_completion(
+        response = llm_client.chat_completion(
             messages=[
                 {"role": "system", "content": PromptTemplates.system_message()},
                 {"role": "user", "content": prompt},

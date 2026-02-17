@@ -19,7 +19,7 @@ from src import (
     settings,
     schema_loader,
     bigquery_client,
-    azure_client,
+    llm_client,  # ConnectChain client (enterprise requirement)
     session_manager,
     AgentState,
     JoinInference,
@@ -238,7 +238,7 @@ def example_6_llm_with_retry():
     print("\nMaking LLM call with automatic retry...")
 
     try:
-        response = azure_client.chat_completion(
+        response = llm_client.chat_completion(
             messages=[
                 {
                     "role": "system",
@@ -265,7 +265,7 @@ def example_6_llm_with_retry():
 
     except FatalError as e:
         print(f"\n✗ Non-recoverable error: {e}")
-        print(f"   Check your Azure OpenAI configuration")
+        print(f"   Check your ConnectChain configuration")
 
 
 def example_7_end_to_end_workflow():
@@ -353,13 +353,13 @@ def main():
 
     # Check if environment is configured
     try:
-        settings.get("azure_openai.endpoint")
+        settings.get("connectchain.config_path")
         settings.get("bigquery.project_id")
     except ValueError as e:
         print(f"\n❌ Configuration Error: {e}")
         print("\nPlease configure your environment:")
         print("1. Copy .env.example to .env")
-        print("2. Fill in your Azure OpenAI and BigQuery credentials")
+        print("2. Fill in your ConnectChain and BigQuery credentials")
         print("3. Set SCHEMA_DIRECTORY to your schema directory (one Excel file per table)")
         return
 

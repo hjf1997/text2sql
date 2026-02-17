@@ -3,7 +3,7 @@
 from typing import List, Optional, Tuple
 from difflib import SequenceMatcher
 from ..schema import Schema, Table, Column, JoinCandidate
-from ..llm import azure_client, PromptTemplates
+from ..llm import llm_client, PromptTemplates
 from ..core import Session
 from ..config import settings
 from ..utils import JoinInferenceError, AmbiguityError, setup_logger
@@ -174,7 +174,7 @@ class JoinInference:
 
         # Get LLM response
         try:
-            response = azure_client.chat_completion(
+            response = llm_client.chat_completion(
                 messages=[
                     {"role": "system", "content": PromptTemplates.system_message()},
                     {"role": "user", "content": prompt},
