@@ -1,0 +1,49 @@
+# ConnectChain Configuration for Text-to-SQL Agent
+# This configuration file is used by the ConnectChain framework
+# For more information, see: https://github.com/americanexpress/connectchain
+
+# Global EAS (Enterprise Auth Service) Configuration
+# Uncomment and configure if using EAS authentication
+# eas:
+#   id_key: CONSUMER_ID
+#   secret_key: CONSUMER_SECRET
+
+# Global Proxy Configuration (optional)
+# Uncomment if your enterprise requires proxy settings
+# proxy:
+#   http: http://proxy.example.com:8080
+#   https: https://proxy.example.com:8080
+
+# Global Certificate Configuration (optional)
+# Uncomment if custom certificates are required
+# cert:
+#   ca_bundle: /path/to/ca-bundle.crt
+
+# Models Configuration
+# Each model configuration can override global settings
+models:
+  # Default model (index '1' or no index)
+  '1':
+    provider: openai
+    type: chat
+    engine: gpt-4
+    model_name: gpt-4
+    api_version: 2024-02-15-preview
+    api_base: ${AZURE_OPENAI_ENDPOINT}
+    # If using EAS, uncomment and configure:
+    # eas:
+    #   id_key: CONSUMER_ID
+    #   secret_key: CONSUMER_SECRET
+
+  # Alternative model configuration (optional)
+  # Uncomment if you need multiple model configurations
+  # '2':
+  #   provider: openai
+  #   type: chat
+  #   engine: gpt-4
+  #   model_name: gpt-4
+  #   api_version: 2024-02-15-preview
+  #   api_base: ${AZURE_OPENAI_ENDPOINT_2}
+  #   eas:
+  #     id_key: CONSUMER_ID2
+  #     secret_key: CONSUMER_SECRET2

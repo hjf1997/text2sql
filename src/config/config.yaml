@@ -1,0 +1,72 @@
+# Text-to-SQL Agent Configuration
+
+# LLM Provider Selection
+llm:
+  use_connectchain: true  # Set to true for ConnectChain, false for direct Azure OpenAI
+
+# ConnectChain Configuration (AMEX Enterprise Framework)
+# Used when llm.use_connectchain is true
+connectchain:
+  config_path: "connectchain.config.yml"  # Path to ConnectChain config file
+  model_index: "1"  # Which model from connectchain.config.yml to use
+  temperature: 0.0
+  max_tokens: 4000
+
+# Azure OpenAI Configuration (Direct API Access)
+# Used when llm.use_connectchain is false
+azure_openai:
+  endpoint: ""  # Set via environment variable AZURE_OPENAI_ENDPOINT
+  api_key: ""  # Set via environment variable AZURE_OPENAI_API_KEY
+  api_version: "2024-02-15-preview"
+  deployment_name: "gpt-4"
+  temperature: 0.0
+  max_tokens: 4000
+
+  retry:
+    max_attempts: 5
+    base_delay: 2  # seconds
+    max_delay: 60  # seconds
+    jitter: true
+    multiplier: 2
+
+bigquery:
+  project_id: ""  # Set via environment variable GCP_PROJECT_ID
+  dataset: ""  # Set via environment variable BIGQUERY_DATASET
+  location: "US"
+  query_timeout: 300  # seconds
+  max_bytes_billed: 10737418240  # 10 GB
+  credentials_path: ""  # Optional: path to service account JSON
+
+session:
+  storage:
+    type: "local_file"  # local_file, sqlite, cloud_sql
+    base_path: "sessions"  # relative to project root
+  checkpoint:
+    auto_save_interval: 30  # seconds
+    compress_large_results: true
+    large_result_threshold: 1048576  # 1 MB
+  retention:
+    completed_sessions: 30  # days
+    failed_sessions: 90  # days
+
+agent:
+  max_iterations: 5
+  max_sql_attempts: 3  # Maximum SQL generation attempts before requiring manual correction
+  max_correction_attempts: 3
+  enable_exploration_queries: true
+  max_exploration_results: 100
+  confidence_threshold: 0.75  # for semantic join inference
+
+schema:
+  schema_directory: ""  # Directory containing Excel files (one per table, filename = table name)
+  general_info_sheet: "General Information"
+  variables_sheet: "Variables"
+  cache_parsed_schema: true
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  include_prompts: true  # for debugging
+  include_sql: true
+  sensitive_data_masking: true
+  log_file: "logs/text2sql.log"

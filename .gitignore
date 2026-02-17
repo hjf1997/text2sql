@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment Variables
+.env
+.env.local
+
+# Sessions and Cache
+sessions/
+cache/
+*.session
+
+# Logs
+logs/
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation
+docs/_build/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Data files (be careful with sensitive data)
+*.xlsx
+*.xls
+*.csv
+data/
+
+# Google Cloud credentials
+*credentials*.json
+*service-account*.json
+
+# Temporary files
+tmp/
+temp/
+*.tmp
