@@ -3,7 +3,7 @@
 import re
 import uuid
 from typing import List, Optional, Dict
-from ..core import Session
+from ..core import Session, AgentState
 from .models import (
     TableMappingLesson,
     ColumnMappingLesson,
@@ -49,7 +49,7 @@ class LessonLearner:
                 lessons.extend(correction_lessons)
 
             # Reinforce successful patterns
-            if session.final_sql and session.state_machine.is_completed():
+            if session.final_sql and session.state_machine.current_state == AgentState.COMPLETED:
                 self._reinforce_used_lessons(session)
 
             # Save all lessons
@@ -75,7 +75,7 @@ class LessonLearner:
         had_error = any(attempt.get("error") for attempt in session.sql_attempts)
 
         # Check if final attempt was successful
-        is_successful = session.state_machine.is_completed() and session.final_sql
+        is_successful = session.state_machine.current_state == AgentState.COMPLETED and session.final_sql
 
         return had_error and is_successful
 
