@@ -137,6 +137,7 @@ class ResilientConnectChain:
         session: Optional[Session] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        timeout: Optional[float] = None,
         **kwargs,
     ) -> str:
         """Make a chat completion request with retry logic.
@@ -146,12 +147,14 @@ class ResilientConnectChain:
             session: Optional session for checkpointing
             temperature: Override default temperature (Note: ConnectChain may not support dynamic temperature)
             max_tokens: Override default max tokens (Note: ConnectChain may not support dynamic max_tokens)
+            timeout: Optional timeout in seconds for the API call (raises asyncio.TimeoutError if exceeded)
             **kwargs: Additional arguments for the API call
 
         Returns:
             Assistant's response content
 
         Raises:
+            asyncio.TimeoutError: If timeout is exceeded
             RetryExhaustedError: If all retry attempts fail
             FatalError: If a non-retryable error occurs
         """
@@ -196,7 +199,13 @@ class ResilientConnectChain:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
 
-                response = loop.run_until_complete(orchestrator.run(prompt_text))
+                # Wrap with timeout if specified
+                if timeout:
+                    response = loop.run_until_complete(
+                        asyncio.wait_for(orchestrator.run(prompt_text), timeout=timeout)
+                    )
+                else:
+                    response = loop.run_until_complete(orchestrator.run(prompt_text))
 
                 # ConnectChain returns the response directly as a string
                 content = response if isinstance(response, str) else str(response)
@@ -208,6 +217,11 @@ class ResilientConnectChain:
 
                 logger.info("ConnectChain call successful")
                 return content
+
+            except asyncio.TimeoutError:
+                # Timeout occurred - re-raise to caller (used by firewall checker)
+                logger.debug(f"Operation timed out after {timeout} seconds")
+                raise
 
             except Exception as e:
                 # Analyze the exception to determine if it's retryable

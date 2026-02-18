@@ -5,7 +5,7 @@ It sends test prompts to the LLM and detects if they are blocked by company poli
 """
 
 import time
-import threading
+import asyncio
 from typing import Dict, List, Optional
 from ..llm import llm_client
 from ..utils import setup_logger
@@ -54,52 +54,44 @@ class FirewallChecker:
 
         logger.debug(f"Checking description: {description[:50]}... (context: {context})")
 
-        # Use threading to implement timeout
-        result_container = {"result": None, "error": None}
-
-        def check_with_llm():
-            """Inner function to call LLM in a separate thread."""
-            try:
-                response = llm_client.chat_completion(
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a data analyst. Respond with 'OK' if you understand."
-                        },
-                        {
-                            "role": "user",
-                            "content": test_prompt
-                        }
-                    ],
-                    session=None,  # No session needed for firewall check
-                )
-                result_container["result"] = response
-            except Exception as e:
-                result_container["error"] = e
-
-        # Start the LLM call in a separate thread
+        # Use asyncio timeout to detect if description passes firewall
         start_time = time.time()
-        thread = threading.Thread(target=check_with_llm, daemon=True)
-        thread.start()
 
-        # Wait for the thread to complete or timeout
-        thread.join(timeout=self.timeout)
-        elapsed = time.time() - start_time
+        try:
+            # Call LLM with timeout
+            response = llm_client.chat_completion(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a data analyst. Respond with 'OK' if you understand."
+                    },
+                    {
+                        "role": "user",
+                        "content": test_prompt
+                    }
+                ],
+                session=None,  # No session needed for firewall check
+                timeout=self.timeout,  # Use asyncio timeout
+            )
 
-        # Check if thread is still alive (timeout occurred)
-        if thread.is_alive():
+            # Got a response within timeout - it passed
+            elapsed = time.time() - start_time
+            self.checked_count += 1
+            logger.debug(f"✓ Description passed firewall check (took {elapsed:.2f}s)")
+            return {"checked": True, "blocked": False, "error": None}
+
+        except asyncio.TimeoutError:
             # Timeout - no error within the timeout period
             # Consider this as PASSED (not blocked)
+            # This means the LLM is processing the request normally without immediate rejection
             self.checked_count += 1
             logger.debug(
                 f"✓ Description passed firewall check (no error within {self.timeout}s timeout)"
             )
             return {"checked": True, "blocked": False, "error": None}
 
-        # Thread completed - check the result
-        if result_container["error"]:
-            error = result_container["error"]
-            error_str = str(error)
+        except Exception as e:
+            error_str = str(e)
 
             # Check if this is a firewall block error
             if self.BLOCK_ERROR_PATTERN.lower() in error_str.lower():
@@ -111,11 +103,6 @@ class FirewallChecker:
                 # Other errors - consider as unchecked
                 logger.error(f"Error during firewall check: {error_str}")
                 return {"checked": False, "blocked": False, "error": error_str}
-        else:
-            # Got a response within timeout - it passed
-            self.checked_count += 1
-            logger.debug(f"✓ Description passed firewall check (took {elapsed:.2f}s)")
-            return {"checked": True, "blocked": False, "error": None}
 
     def check_column_descriptions(
         self,
