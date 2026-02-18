@@ -86,6 +86,8 @@ class ExcelSchemaParser:
     def _parse_general_info(self, sheet_name: str) -> Dict:
         """Parse general information sheet for table metadata.
 
+        Converts the entire General Information sheet into a string description.
+
         Args:
             sheet_name: Name of the sheet
 
@@ -101,26 +103,28 @@ class ExcelSchemaParser:
             )
             return {}
 
+        # Convert the entire dataframe to a string description
+        # Remove NaN values and format nicely
+        description_lines = []
+
+        for _, row in df.iterrows():
+            # Convert row to string, excluding NaN values
+            row_items = []
+            for col_name, value in row.items():
+                if pd.notna(value):
+                    row_items.append(f"{col_name}: {value}")
+
+            if row_items:
+                description_lines.append("; ".join(row_items))
+
+        # Join all rows with newlines
+        description = "\n".join(description_lines) if description_lines else None
+
         table_info = {
             "name": self.table_name,
-            "description": None,
+            "description": description,
             "business_context": None,
         }
-
-        # Try to find table metadata in the sheet
-        # The sheet might have the info in various formats
-        for _, row in df.iterrows():
-            # Look for description
-            for col in ["Description", "Table Description", "description"]:
-                if col in row.index and pd.notna(row[col]):
-                    table_info["description"] = str(row[col]).strip()
-                    break
-
-            # Look for business context
-            for col in ["Business Context", "Context", "business_context"]:
-                if col in row.index and pd.notna(row[col]):
-                    table_info["business_context"] = str(row[col]).strip()
-                    break
 
         logger.info(f"Parsed general information for table: {self.table_name}")
         return table_info
