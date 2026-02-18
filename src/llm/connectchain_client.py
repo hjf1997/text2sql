@@ -394,14 +394,28 @@ Your progress has been saved:
                     f"{retry_ctx.config.max_attempts}"
                 )
 
-                # Create orchestrator
-                orchestrator = self._create_orchestrator(
-                    prompt_template="{prompt}",
-                    input_variables=["prompt"],
-                )
+                # Get LLM directly from ConnectChain using the model function
+                try:
+                    from connectchain.lcel.model import model as get_model
+                    llm = get_model(self.model_index)
+                except ImportError:
+                    logger.warning("Could not import connectchain.lcel.model, trying alternative")
+                    # Fallback: try to access _chain from orchestrator
+                    orchestrator = self._create_orchestrator(
+                        prompt_template="{prompt}",
+                        input_variables=["prompt"],
+                    )
+                    # Access the private _chain attribute (not ideal but necessary)
+                    if hasattr(orchestrator, '_chain'):
+                        chain = orchestrator._chain
+                        if hasattr(chain, 'llm'):
+                            llm = chain.llm
+                        else:
+                            raise FatalError("Cannot access LLM from ConnectChain orchestrator")
+                    else:
+                        raise FatalError("Cannot access chain from ConnectChain orchestrator")
 
-                # Get the underlying LLM from orchestrator and wrap with structured output
-                llm = orchestrator.llm
+                # Wrap LLM with structured output
                 structured_llm = llm.with_structured_output(schema)
 
                 # Convert messages to LangChain format
