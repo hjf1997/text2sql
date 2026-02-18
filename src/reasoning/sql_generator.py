@@ -7,6 +7,7 @@ from ..llm import llm_client, PromptTemplates
 from ..core import Session
 from ..memory import TableMapper, lesson_repository
 from ..utils import setup_logger, ValidationError
+from .output_schemas import SQLGenerationOutput
 
 logger = setup_logger(__name__)
 
@@ -84,18 +85,37 @@ class SQLGenerator:
             lessons=lessons,  # Include lessons
         )
 
-        # Get LLM response
-        response = llm_client.chat_completion(
-            messages=[
-                {"role": "system", "content": PromptTemplates.system_message()},
-                {"role": "user", "content": prompt},
-            ],
-            session=session,
-            temperature=0.0,  # Use deterministic generation for SQL
-        )
+        # Use with_structured_output for automatic schema enforcement
+        try:
+            output = llm_client.with_structured_output(
+                schema=SQLGenerationOutput,
+                messages=[
+                    {"role": "system", "content": PromptTemplates.system_message()},
+                    {"role": "user", "content": prompt},
+                ],
+                session=session,
+            )
 
-        # Extract SQL from response
-        sql = self._extract_sql(response)
+            logger.info(f"Successfully generated SQL with structured output")
+            if output.explanation:
+                logger.debug(f"Explanation: {output.explanation}")
+            if output.confidence:
+                logger.info(f"Confidence: {output.confidence:.2f}")
+
+            sql = output.sql
+
+        except Exception as e:
+            logger.warning(f"Structured output failed: {str(e)}, falling back to regex extraction")
+            # Fallback to traditional method
+            response = llm_client.chat_completion(
+                messages=[
+                    {"role": "system", "content": PromptTemplates.system_message()},
+                    {"role": "user", "content": prompt},
+                ],
+                session=session,
+                temperature=0.0,
+            )
+            sql = self._extract_sql(response)
 
         # Clean SQL
         sql = self._clean_sql(sql)
@@ -168,18 +188,35 @@ class SQLGenerator:
             lessons=lessons,  # Include lessons
         )
 
-        # Get LLM response
-        response = llm_client.chat_completion(
-            messages=[
-                {"role": "system", "content": PromptTemplates.system_message()},
-                {"role": "user", "content": prompt},
-            ],
-            session=session,
-            temperature=0.0,  # Use deterministic generation for SQL
-        )
+        # Use with_structured_output for automatic schema enforcement
+        try:
+            output = llm_client.with_structured_output(
+                schema=SQLGenerationOutput,
+                messages=[
+                    {"role": "system", "content": PromptTemplates.system_message()},
+                    {"role": "user", "content": prompt},
+                ],
+                session=session,
+            )
 
-        # Extract SQL from response
-        sql = self._extract_sql(response)
+            logger.info(f"Successfully refined SQL with structured output")
+            if output.explanation:
+                logger.debug(f"Explanation of fixes: {output.explanation}")
+
+            sql = output.sql
+
+        except Exception as e:
+            logger.warning(f"Structured output failed: {str(e)}, falling back to regex extraction")
+            # Fallback to traditional method
+            response = llm_client.chat_completion(
+                messages=[
+                    {"role": "system", "content": PromptTemplates.system_message()},
+                    {"role": "user", "content": prompt},
+                ],
+                session=session,
+                temperature=0.0,
+            )
+            sql = self._extract_sql(response)
 
         # Clean SQL
         sql = self._clean_sql(sql)
@@ -189,7 +226,7 @@ class SQLGenerator:
         return sql
 
     def _extract_sql(self, response: str) -> str:
-        """Extract SQL query from LLM response.
+        """Extract SQL query from LLM response using regex.
 
         Args:
             response: LLM response text

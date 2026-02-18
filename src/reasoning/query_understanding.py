@@ -1,12 +1,11 @@
 """Query understanding module for identifying tables and columns from user queries."""
 
-import json
-import re
 from typing import List, Dict, Optional
 from ..schema import Schema
 from ..llm import llm_client, PromptTemplates
 from ..core import Session
 from ..utils import setup_logger
+from .output_schemas import QueryUnderstandingOutput
 
 logger = setup_logger(__name__)
 
@@ -40,6 +39,7 @@ class QueryUnderstanding:
                 - joins_needed: Boolean
                 - filters: Description of filters needed
                 - aggregations: Description of aggregations needed
+                - ordering: Description of ordering requirements
                 - reasoning: Explanation of the analysis
         """
         logger.info(f"Analyzing query: {user_query}")
@@ -47,104 +47,57 @@ class QueryUnderstanding:
         # Generate understanding prompt
         prompt = PromptTemplates.query_understanding(user_query, self.schema)
 
-        # Get LLM analysis
-        response = llm_client.chat_completion(
-            messages=[
-                {"role": "system", "content": PromptTemplates.system_message()},
-                {"role": "user", "content": prompt},
-            ],
-            session=session,
-        )
+        # Use with_structured_output for automatic schema enforcement
+        try:
+            output = llm_client.with_structured_output(
+                schema=QueryUnderstandingOutput,
+                messages=[
+                    {"role": "system", "content": PromptTemplates.system_message()},
+                    {"role": "user", "content": prompt},
+                ],
+                session=session,
+            )
 
-        # Parse response
-        understanding = self._parse_understanding_response(response)
-
-        logger.info(
-            f"Identified {len(understanding['tables'])} table(s): "
-            f"{understanding['tables']}"
-        )
-
-        return understanding
-
-    def _parse_understanding_response(self, response: str) -> Dict[str, any]:
-        """Parse LLM response into structured understanding.
-
-        Args:
-            response: LLM response text
-
-        Returns:
-            Dictionary with parsed understanding
-        """
-        understanding = {
-            "tables": [],
-            "columns": [],
-            "joins_needed": False,
-            "filters": None,
-            "aggregations": None,
-            "reasoning": None,
-        }
-
-        # Parse tables
-        tables_match = re.search(
-            r"REQUIRED TABLES:\s*\[?([^\]\n]+)\]?",
-            response,
-            re.IGNORECASE
-        )
-        if tables_match:
-            tables_text = tables_match.group(1)
-            # Extract table names (split by comma and clean)
-            tables = [t.strip().strip('"\'') for t in tables_text.split(',')]
-            # Filter out empty strings and validate against schema
-            understanding["tables"] = [
-                t for t in tables
-                if t and self.schema.get_table(t)
+            # Validate tables against schema
+            valid_tables = [
+                t for t in output.tables
+                if self.schema.get_table(t)
             ]
 
-        # Parse columns
-        columns_match = re.search(
-            r"REQUIRED COLUMNS:\s*\[?([^\]\n]+)\]?",
-            response,
-            re.IGNORECASE
-        )
-        if columns_match:
-            columns_text = columns_match.group(1)
-            columns = [c.strip().strip('"\'') for c in columns_text.split(',')]
-            understanding["columns"] = [c for c in columns if c]
+            if len(valid_tables) < len(output.tables):
+                invalid_tables = set(output.tables) - set(valid_tables)
+                logger.warning(
+                    f"Some tables not found in schema: {invalid_tables}"
+                )
 
-        # Parse joins needed
-        joins_match = re.search(
-            r"JOINS NEEDED:\s*(\w+)",
-            response,
-            re.IGNORECASE
-        )
-        if joins_match:
-            understanding["joins_needed"] = joins_match.group(1).lower() in ["yes", "true", "y"]
+            # Convert to dictionary
+            understanding = {
+                "tables": valid_tables,
+                "columns": output.columns,
+                "joins_needed": output.joins_needed,
+                "filters": output.filters,
+                "aggregations": output.aggregations,
+                "ordering": output.ordering,
+                "reasoning": output.reasoning,
+            }
 
-        # Parse filters
-        filters_match = re.search(
-            r"FILTERS:\s*(.+?)(?=\n[A-Z]+:|$)",
-            response,
-            re.IGNORECASE | re.DOTALL
-        )
-        if filters_match:
-            understanding["filters"] = filters_match.group(1).strip()
+            logger.info(
+                f"Identified {len(understanding['tables'])} table(s): "
+                f"{understanding['tables']}"
+            )
 
-        # Parse aggregations
-        agg_match = re.search(
-            r"AGGREGATIONS:\s*(.+?)(?=\n[A-Z]+:|$)",
-            response,
-            re.IGNORECASE | re.DOTALL
-        )
-        if agg_match:
-            understanding["aggregations"] = agg_match.group(1).strip()
+            return understanding
 
-        # Parse reasoning
-        reasoning_match = re.search(
-            r"REASONING:\s*(.+?)$",
-            response,
-            re.IGNORECASE | re.DOTALL
-        )
-        if reasoning_match:
-            understanding["reasoning"] = reasoning_match.group(1).strip()
+        except Exception as e:
+            logger.error(f"Query understanding failed: {str(e)}")
+            # Return empty understanding as fallback
+            return {
+                "tables": [],
+                "columns": [],
+                "joins_needed": False,
+                "filters": None,
+                "aggregations": None,
+                "ordering": None,
+                "reasoning": f"Error: {str(e)}",
+            }
 
-        return understanding

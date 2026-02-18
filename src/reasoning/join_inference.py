@@ -7,6 +7,7 @@ from ..llm import llm_client, PromptTemplates
 from ..core import Session
 from ..config import settings
 from ..utils import JoinInferenceError, AmbiguityError, setup_logger
+from .output_schemas import JoinInferenceOutput
 
 logger = setup_logger(__name__)
 
@@ -172,9 +173,10 @@ class JoinInference:
             table1, table2, self.schema, constraints
         )
 
-        # Get LLM response
+        # Use with_structured_output for automatic schema enforcement
         try:
-            response = llm_client.chat_completion(
+            output = llm_client.with_structured_output(
+                schema=JoinInferenceOutput,
                 messages=[
                     {"role": "system", "content": PromptTemplates.system_message()},
                     {"role": "user", "content": prompt},
@@ -182,67 +184,33 @@ class JoinInference:
                 session=session,
             )
 
-            # Parse response into join candidates
-            joins = self._parse_llm_join_response(response, table1, table2)
+            # Check if any joins were found
+            if not output.found_joins or not output.joins:
+                logger.info("No joins found by LLM")
+                return []
+
+            # Convert to JoinCandidate objects
+            joins = []
+            for join_output in output.joins:
+                joins.append(JoinCandidate(
+                    left_table=table1,
+                    right_table=table2,
+                    left_column=join_output.left_column,
+                    right_column=join_output.right_column,
+                    confidence=join_output.confidence,
+                    reasoning=join_output.reasoning,
+                ))
+
+            # Sort by confidence
+            joins.sort(key=lambda x: x.confidence, reverse=True)
+
+            logger.info(f"Parsed {len(joins)} join(s) from LLM response")
             return joins
 
         except Exception as e:
             logger.error(f"LLM join inference failed: {str(e)}")
             return []
 
-    def _parse_llm_join_response(
-        self,
-        response: str,
-        table1: str,
-        table2: str,
-    ) -> List[JoinCandidate]:
-        """Parse LLM response into join candidates.
-
-        Args:
-            response: LLM response text
-            table1: First table name
-            table2: Second table name
-
-        Returns:
-            List of join candidates
-        """
-        if "NO_JOIN_FOUND" in response:
-            return []
-
-        joins = []
-        current_join = {}
-
-        for line in response.split('\n'):
-            line = line.strip()
-
-            if line.startswith("LEFT_COLUMN:"):
-                current_join["left_column"] = line.split(":", 1)[1].strip()
-            elif line.startswith("RIGHT_COLUMN:"):
-                current_join["right_column"] = line.split(":", 1)[1].strip()
-            elif line.startswith("CONFIDENCE:"):
-                try:
-                    conf_str = line.split(":", 1)[1].strip()
-                    current_join["confidence"] = float(conf_str)
-                except ValueError:
-                    current_join["confidence"] = 0.7  # Default
-            elif line.startswith("REASONING:"):
-                current_join["reasoning"] = line.split(":", 1)[1].strip()
-
-                # If we have all fields, create join candidate
-                if all(k in current_join for k in ["left_column", "right_column", "confidence"]):
-                    joins.append(JoinCandidate(
-                        left_table=table1,
-                        right_table=table2,
-                        left_column=current_join["left_column"],
-                        right_column=current_join["right_column"],
-                        confidence=current_join["confidence"],
-                        reasoning=current_join.get("reasoning"),
-                    ))
-                    current_join = {}
-
-        # Sort by confidence
-        joins.sort(key=lambda x: x.confidence, reverse=True)
-        return joins
 
     def _calculate_join_confidence(
         self,

@@ -7,9 +7,11 @@ For ConnectChain documentation, see: https://github.com/americanexpress/connectc
 """
 
 import asyncio
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Type, TypeVar
+from pydantic import BaseModel
 from connectchain.orchestrators import PortableOrchestrator
 from langchain.prompts import PromptTemplate
+from langchain_core.messages import HumanMessage, SystemMessage
 from ..config import settings
 from ..core import Session, session_manager
 from ..utils import (
@@ -22,6 +24,9 @@ from ..utils import (
 )
 
 logger = setup_logger(__name__)
+
+# Type variable for Pydantic models
+T = TypeVar('T', bound=BaseModel)
 
 
 class ResilientConnectChain:
@@ -345,6 +350,145 @@ Your progress has been saved:
             session=session,
             **kwargs,
         )
+
+    def with_structured_output(
+        self,
+        schema: Type[T],
+        messages: List[Dict[str, str]],
+        session: Optional[Session] = None,
+        **kwargs,
+    ) -> T:
+        """Use LangChain's with_structured_output() for automatic schema enforcement.
+
+        Args:
+            schema: Pydantic model class to enforce
+            messages: List of message dictionaries
+            session: Optional session for checkpointing
+            **kwargs: Additional arguments
+
+        Returns:
+            Instance of the Pydantic model with parsed data
+
+        Raises:
+            RetryExhaustedError: If all retry attempts fail
+            FatalError: If a non-retryable error occurs
+        """
+        # Checkpoint session before call if enabled
+        if session and self.checkpoint_before_call:
+            session_manager.checkpoint_session(session)
+
+        # Create retry context
+        retry_ctx = RetryContext(
+            config=self.retry_config,
+            operation_name="connectchain_structured_output",
+        )
+
+        last_exception = None
+
+        while retry_ctx.attempt < retry_ctx.config.max_attempts:
+            retry_ctx.increment_attempt()
+
+            try:
+                logger.info(
+                    f"ConnectChain structured output call attempt {retry_ctx.attempt}/"
+                    f"{retry_ctx.config.max_attempts}"
+                )
+
+                # Create orchestrator
+                orchestrator = self._create_orchestrator(
+                    prompt_template="{prompt}",
+                    input_variables=["prompt"],
+                )
+
+                # Get the underlying LLM from orchestrator and wrap with structured output
+                llm = orchestrator.llm
+                structured_llm = llm.with_structured_output(schema)
+
+                # Convert messages to LangChain format
+                lc_messages = []
+                for msg in messages:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+
+                    if role == "system":
+                        lc_messages.append(SystemMessage(content=content))
+                    else:  # user or assistant
+                        lc_messages.append(HumanMessage(content=content))
+
+                # Run with structured output
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                # Invoke the structured LLM
+                result = loop.run_until_complete(structured_llm.ainvoke(lc_messages))
+
+                # Update session with response if provided
+                if session:
+                    session.add_message("assistant", str(result))
+                    session_manager.checkpoint_session(session)
+
+                logger.info("ConnectChain structured output call successful")
+                return result
+
+            except asyncio.TimeoutError:
+                logger.debug("Operation timed out")
+                raise
+
+            except Exception as e:
+                # Analyze the exception to determine if it's retryable
+                error_str = str(e).lower()
+
+                # Check for retryable errors
+                is_retryable = any(
+                    keyword in error_str
+                    for keyword in ["timeout", "rate limit", "503", "502", "500", "429"]
+                )
+
+                if is_retryable:
+                    last_exception = RecoverableError(str(e))
+                    logger.warning(f"Recoverable error: {str(e)}")
+
+                    if retry_ctx.should_retry(last_exception):
+                        if session:
+                            session.add_message(
+                                "system",
+                                f"API call failed (attempt {retry_ctx.attempt}): {str(e)}. Retrying...",
+                            )
+                            session_manager.checkpoint_session(session)
+
+                        retry_ctx.wait()
+                    else:
+                        break
+                else:
+                    # Non-retryable errors
+                    error_msg = f"ConnectChain structured output error (non-retryable): {str(e)}"
+                    logger.error(error_msg)
+
+                    if session:
+                        session.add_message("system", error_msg)
+                        session_manager.checkpoint_session(session)
+
+                    raise FatalError(error_msg) from e
+
+        # All retries exhausted
+        error_msg = (
+            f"ConnectChain API unavailable after {retry_ctx.config.max_attempts} attempts. "
+            f"Last error: {str(last_exception)}"
+        )
+        logger.error(error_msg)
+
+        if session:
+            session.state_machine.transition_to(
+                session.state_machine.current_state.__class__.INTERRUPTED,
+                reason="API retry exhausted",
+            )
+            session.add_message("system", error_msg)
+            session_manager.save_session(session)
+
+        raise RetryExhaustedError(error_msg) from last_exception
 
 
 # Global resilient ConnectChain client instance

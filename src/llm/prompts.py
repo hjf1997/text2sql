@@ -30,16 +30,8 @@ TASK:
 1. Identify which tables are needed to answer the query
 2. Identify which columns from those tables are needed
 3. Determine if any joins between tables are required
-4. Identify any filters or aggregations needed
-
-Provide your analysis in the following format:
-
-REQUIRED TABLES: [list of table names]
-REQUIRED COLUMNS: [list of table.column names]
-JOINS NEEDED: [yes/no]
-FILTERS: [description of any filters]
-AGGREGATIONS: [description of any aggregations]
-REASONING: [your reasoning for the above selections]
+4. Identify any filters, aggregations, and ordering requirements
+5. Explain your reasoning for these selections
 """
 
     @staticmethod
@@ -89,16 +81,14 @@ Identify potential join columns by analyzing:
 3. Data types (must be compatible)
 4. Primary key indicators
 
-For each potential join, provide:
-- LEFT_TABLE: {table1}
-- RIGHT_TABLE: {table2}
-- LEFT_COLUMN: [column name]
-- RIGHT_COLUMN: [column name]
-- CONFIDENCE: [score from 0.0 to 1.0]
-- REASONING: [why this is a good join]
+For each potential join candidate:
+- Specify the column from the left table ({table1})
+- Specify the column from the right table ({table2})
+- Assign a confidence score from 0.0 to 1.0 based on how likely this is the correct join
+- Provide reasoning explaining why this is a good join
 
 If multiple joins are possible, list all of them ordered by confidence (highest first).
-If no valid join can be inferred, respond with "NO_JOIN_FOUND" and explain why.
+If no valid join can be inferred, set found_joins to false and explain why in the reasoning.
 """
 
     @staticmethod
@@ -204,9 +194,8 @@ REQUIREMENTS:
 3. Include necessary joins, filters, and aggregations
 4. Optimize for performance
 5. IMPORTANT: Apply the learned patterns from "Lessons Learned" section above
-6. Return only the SQL query without explanation
 
-Generate the SQL query:
+Provide the SQL query along with an explanation of how it answers the user's question.
 """
 
     @staticmethod
@@ -329,9 +318,8 @@ REQUIREMENTS:
 2. Fix the specific error mentioned above
 3. Maintain the original intent of the user query
 4. Apply learned patterns from "Lessons Learned" section if present
-5. Return only the CORRECTED SQL query without explanation
 
-Generate the corrected SQL query:
+Provide the corrected SQL query along with an explanation of what was fixed.
 """
 
     @staticmethod
