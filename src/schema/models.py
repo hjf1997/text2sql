@@ -49,6 +49,8 @@ class Column:
             "is_partition": self.is_partition,
             "is_primary": self.is_primary,
             "table_name": self.table_name,
+            "firewall_checked": self.firewall_checked,
+            "firewall_blocked": self.firewall_blocked,
         }
 
     def get_full_name(self) -> str:
@@ -95,6 +97,8 @@ class Table:
             "columns": [col.to_dict() for col in self.columns],
             "business_context": self.business_context,
             "dataset": self.dataset,
+            "firewall_checked": self.firewall_checked,
+            "firewall_blocked": self.firewall_blocked,
         }
 
     def to_schema_string(self) -> str:

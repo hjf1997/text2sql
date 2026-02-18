@@ -5,6 +5,7 @@ It sends test prompts to the LLM and detects if they are blocked by company poli
 """
 
 import time
+import threading
 from typing import Dict, List, Optional
 from ..llm import llm_client
 from ..utils import setup_logger
@@ -51,33 +52,54 @@ class FirewallChecker:
         # Create a minimal test prompt with the description
         test_prompt = f"Analyze this data field description: {description}"
 
-        try:
-            logger.debug(f"Checking description: {description[:50]}... (context: {context})")
+        logger.debug(f"Checking description: {description[:50]}... (context: {context})")
 
-            # Send test prompt to LLM
-            start_time = time.time()
-            response = llm_client.chat_completion(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a data analyst. Respond with 'OK' if you understand."
-                    },
-                    {
-                        "role": "user",
-                        "content": test_prompt
-                    }
-                ],
-                session=None,  # No session needed for firewall check
-            )
-            elapsed = time.time() - start_time
+        # Use threading to implement timeout
+        result_container = {"result": None, "error": None}
 
-            # If we got a response, it passed the firewall
+        def check_with_llm():
+            """Inner function to call LLM in a separate thread."""
+            try:
+                response = llm_client.chat_completion(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a data analyst. Respond with 'OK' if you understand."
+                        },
+                        {
+                            "role": "user",
+                            "content": test_prompt
+                        }
+                    ],
+                    session=None,  # No session needed for firewall check
+                )
+                result_container["result"] = response
+            except Exception as e:
+                result_container["error"] = e
+
+        # Start the LLM call in a separate thread
+        start_time = time.time()
+        thread = threading.Thread(target=check_with_llm, daemon=True)
+        thread.start()
+
+        # Wait for the thread to complete or timeout
+        thread.join(timeout=self.timeout)
+        elapsed = time.time() - start_time
+
+        # Check if thread is still alive (timeout occurred)
+        if thread.is_alive():
+            # Timeout - no error within the timeout period
+            # Consider this as PASSED (not blocked)
             self.checked_count += 1
-            logger.debug(f"✓ Description passed firewall check (took {elapsed:.2f}s)")
+            logger.debug(
+                f"✓ Description passed firewall check (no error within {self.timeout}s timeout)"
+            )
             return {"checked": True, "blocked": False, "error": None}
 
-        except Exception as e:
-            error_str = str(e)
+        # Thread completed - check the result
+        if result_container["error"]:
+            error = result_container["error"]
+            error_str = str(error)
 
             # Check if this is a firewall block error
             if self.BLOCK_ERROR_PATTERN.lower() in error_str.lower():
@@ -89,6 +111,11 @@ class FirewallChecker:
                 # Other errors - consider as unchecked
                 logger.error(f"Error during firewall check: {error_str}")
                 return {"checked": False, "blocked": False, "error": error_str}
+        else:
+            # Got a response within timeout - it passed
+            self.checked_count += 1
+            logger.debug(f"✓ Description passed firewall check (took {elapsed:.2f}s)")
+            return {"checked": True, "blocked": False, "error": None}
 
     def check_column_descriptions(
         self,

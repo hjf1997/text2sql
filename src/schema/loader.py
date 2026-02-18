@@ -140,7 +140,7 @@ class SchemaLoader:
             f"{len(schema.get_all_columns())} total columns"
         )
 
-        # Run firewall check if requested
+        # Run firewall check if requested (with incremental caching)
         if check_firewall:
             logger.info("\n" + "="*60)
             logger.info("Starting firewall check for schema descriptions...")
@@ -149,7 +149,28 @@ class SchemaLoader:
             try:
                 from .firewall_checker import FirewallChecker
                 checker = FirewallChecker()
-                checker.check_schema(schema, skip_checked=True)
+
+                # Check each table and save to cache incrementally
+                for table_idx, (table_name, table) in enumerate(schema.tables.items(), 1):
+                    logger.info(f"\n[{table_idx}/{len(schema.tables)}] Checking table: {table_name}")
+
+                    # Check table description
+                    checker.check_table_description(table, skip_checked=True)
+
+                    # Check column descriptions
+                    checker.check_column_descriptions(
+                        table.columns,
+                        table_name,
+                        skip_checked=True
+                    )
+
+                    # Save to cache after each table is checked (incremental save)
+                    if settings.get("schema.cache_parsed_schema", True):
+                        try:
+                            self._save_to_cache(schema_dir, schema)
+                            logger.debug(f"   💾 Saved schema to cache after checking {table_name}")
+                        except Exception as cache_error:
+                            logger.warning(f"Failed to save cache after {table_name}: {cache_error}")
 
                 logger.info("✓ Firewall check complete")
             except Exception as e:
@@ -158,10 +179,13 @@ class SchemaLoader:
                     "Schema loaded but firewall check incomplete. "
                     "Descriptions may be blocked when used in prompts."
                 )
-
-        # Cache schema
-        if settings.get("schema.cache_parsed_schema", True):
-            self._save_to_cache(schema_dir, schema)
+                # Still save what we have
+                if settings.get("schema.cache_parsed_schema", True):
+                    self._save_to_cache(schema_dir, schema)
+        else:
+            # No firewall check - just save to cache
+            if settings.get("schema.cache_parsed_schema", True):
+                self._save_to_cache(schema_dir, schema)
 
         self._schema = schema
         return schema
@@ -286,6 +310,8 @@ class SchemaLoader:
                 description=table_data.get("description"),
                 business_context=table_data.get("business_context"),
                 dataset=table_data.get("dataset"),
+                firewall_checked=table_data.get("firewall_checked", False),
+                firewall_blocked=table_data.get("firewall_blocked", False),
             )
 
             for col_data in table_data.get("columns", []):
@@ -300,6 +326,8 @@ class SchemaLoader:
                     is_partition=col_data.get("is_partition", False),
                     is_primary=col_data.get("is_primary", False),
                     table_name=col_data.get("table_name"),
+                    firewall_checked=col_data.get("firewall_checked", False),
+                    firewall_blocked=col_data.get("firewall_blocked", False),
                 )
                 table.add_column(column)
 
