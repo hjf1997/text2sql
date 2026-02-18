@@ -102,10 +102,16 @@ class Table:
         }
 
     def to_schema_string(self) -> str:
-        """Convert table to a human-readable schema string for LLM context."""
+        """Convert table to a human-readable schema string for LLM context.
+
+        Automatically filters out descriptions that are blocked by firewall.
+        """
         lines = [f"Table: {self.name}"]
-        if self.description:
+
+        # Only include description if not blocked by firewall
+        if self.description and not self.firewall_blocked:
             lines.append(f"Description: {self.description}")
+
         if self.business_context:
             lines.append(f"Business Context: {self.business_context}")
 
@@ -114,8 +120,11 @@ class Table:
             col_info = f"  - {col.name} ({col.data_type.value})"
             if col.business_name:
                 col_info += f" [Business Name: {col.business_name}]"
-            if col.description:
+
+            # Only include column description if not blocked by firewall
+            if col.description and not col.firewall_blocked:
                 col_info += f" - {col.description}"
+
             if col.is_primary:
                 col_info += " [PRIMARY KEY]"
             if col.is_pii:
