@@ -36,6 +36,7 @@ class SchemaLoader:
         project_id: Optional[str] = None,
         dataset: Optional[str] = None,
         use_cache: bool = True,
+        check_firewall: bool = True,
     ) -> Schema:
         """Load schema from directory containing Excel files (one per table).
 
@@ -46,6 +47,7 @@ class SchemaLoader:
             project_id: GCP project ID (defaults to config)
             dataset: BigQuery dataset (defaults to config)
             use_cache: Whether to use cached schema if available
+            check_firewall: Whether to check descriptions against firewall (default: True)
 
         Returns:
             Loaded Schema object containing all tables
@@ -137,6 +139,25 @@ class SchemaLoader:
             f"Successfully loaded schema with {len(schema.tables)} tables, "
             f"{len(schema.get_all_columns())} total columns"
         )
+
+        # Run firewall check if requested
+        if check_firewall:
+            logger.info("\n" + "="*60)
+            logger.info("Starting firewall check for schema descriptions...")
+            logger.info("="*60)
+
+            try:
+                from .firewall_checker import FirewallChecker
+                checker = FirewallChecker()
+                checker.check_schema(schema, skip_checked=True)
+
+                logger.info("✓ Firewall check complete")
+            except Exception as e:
+                logger.error(f"Firewall check failed: {str(e)}")
+                logger.warning(
+                    "Schema loaded but firewall check incomplete. "
+                    "Descriptions may be blocked when used in prompts."
+                )
 
         # Cache schema
         if settings.get("schema.cache_parsed_schema", True):

@@ -32,6 +32,9 @@ class Column:
     is_partition: bool = False
     is_primary: bool = False
     table_name: Optional[str] = None
+    # Firewall checking attributes
+    firewall_checked: bool = False
+    firewall_blocked: bool = False
 
     def to_dict(self) -> Dict:
         """Convert column to dictionary representation."""
@@ -64,6 +67,9 @@ class Table:
     columns: List[Column] = field(default_factory=list)
     business_context: Optional[str] = None
     dataset: Optional[str] = None
+    # Firewall checking attributes
+    firewall_checked: bool = False
+    firewall_blocked: bool = False
 
     def add_column(self, column: Column) -> None:
         """Add a column to the table."""
