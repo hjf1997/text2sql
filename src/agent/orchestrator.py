@@ -104,6 +104,12 @@ class Text2SQLAgent:
         session.add_message("user", user_query)
 
         try:
+            # Transition to schema loading (schema already loaded in __init__)
+            session.state_machine.transition_to(
+                AgentState.SCHEMA_LOADING,
+                reason="Schema already loaded during initialization"
+            )
+
             # Run the agent workflow
             sql, results = self._run_workflow(session, user_query, execute)
 
