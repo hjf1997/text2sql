@@ -86,7 +86,7 @@ class ExcelSchemaParser:
     def _parse_general_info(self, sheet_name: str) -> Dict:
         """Parse general information sheet for table metadata.
 
-        Converts the entire General Information sheet into a string description.
+        Load table description from general information sheet.
 
         Args:
             sheet_name: Name of the sheet
@@ -95,7 +95,8 @@ class ExcelSchemaParser:
             Dictionary with table metadata
         """
         try:
-            df = pd.read_excel(self.excel_file, sheet_name=sheet_name)
+            # Read table description
+            df = pd.read_excel(self.excel_file, sheet_name=sheet_name, nrows=12)
         except Exception as e:
             logger.warning(
                 f"Failed to read '{sheet_name}' sheet: {str(e)}. "
@@ -103,7 +104,7 @@ class ExcelSchemaParser:
             )
             return {}
 
-        # Convert the entire dataframe to a string description
+        # Convert to string description
         # Remove NaN values and format nicely
         description_lines = []
 
@@ -123,7 +124,6 @@ class ExcelSchemaParser:
         table_info = {
             "name": self.table_name,
             "description": description,
-            "business_context": None,
         }
 
         logger.info(f"Parsed general information for table: {self.table_name}")
@@ -233,7 +233,6 @@ class ExcelSchemaParser:
         table = Table(
             name=self.table_name,
             description=table_info.get("description"),
-            business_context=table_info.get("business_context"),
         )
 
         # Add columns to table

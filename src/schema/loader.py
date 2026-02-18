@@ -308,7 +308,6 @@ class SchemaLoader:
             table = Table(
                 name=table_data["name"],
                 description=table_data.get("description"),
-                business_context=table_data.get("business_context"),
                 dataset=table_data.get("dataset"),
                 firewall_checked=table_data.get("firewall_checked", False),
                 firewall_blocked=table_data.get("firewall_blocked", False),

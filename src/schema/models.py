@@ -67,7 +67,6 @@ class Table:
     name: str
     description: Optional[str] = None
     columns: List[Column] = field(default_factory=list)
-    business_context: Optional[str] = None
     dataset: Optional[str] = None
     # Firewall checking attributes
     firewall_checked: bool = False
@@ -95,7 +94,6 @@ class Table:
             "name": self.name,
             "description": self.description,
             "columns": [col.to_dict() for col in self.columns],
-            "business_context": self.business_context,
             "dataset": self.dataset,
             "firewall_checked": self.firewall_checked,
             "firewall_blocked": self.firewall_blocked,
@@ -111,9 +109,6 @@ class Table:
         # Only include description if not blocked by firewall
         if self.description and not self.firewall_blocked:
             lines.append(f"Description: {self.description}")
-
-        if self.business_context:
-            lines.append(f"Business Context: {self.business_context}")
 
         lines.append("\nColumns:")
         for col in self.columns:
