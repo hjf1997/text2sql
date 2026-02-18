@@ -1,6 +1,6 @@
 """Prompt templates for LLM interactions."""
 
-from typing import List, Optional
+from typing import List, Optional, Dict
 from ..schema import Schema, JoinCandidate
 
 
@@ -100,27 +100,37 @@ If no valid join can be inferred, set found_joins to false and explain why in th
         constraints: Optional[List[str]] = None,
         exploration_results: Optional[dict] = None,
         lessons: Optional[List] = None,
+        table_name_mapping: Optional[Dict[str, str]] = None,
     ) -> str:
         """Generate prompt for SQL query generation.
 
         Args:
             user_query: The user's query
             schema: Database schema
-            identified_tables: List of tables to use
+            identified_tables: List of tables to use (schema names)
             join_conditions: Optional join conditions
             constraints: Optional constraint strings from corrections
             exploration_results: Optional results from exploration queries
             lessons: Optional lessons learned from past queries
+            table_name_mapping: Optional mapping from schema names to actual DB table names
 
         Returns:
             Formatted prompt
         """
-        # Format schema for relevant tables only
+        # Format schema for relevant tables (use original names for lookup)
         relevant_schema = []
         for table_name in identified_tables:
             table = schema.get_table(table_name)
             if table:
-                relevant_schema.append(table.to_schema_string())
+                schema_str = table.to_schema_string()
+
+                # If there's a table name transformation, add a note
+                if table_name_mapping and table_name in table_name_mapping:
+                    actual_name = table_name_mapping[table_name]
+                    if actual_name != table_name:
+                        schema_str += f"\n  → IMPORTANT: Use actual table name in SQL: {actual_name}"
+
+                relevant_schema.append(schema_str)
 
         schema_str = "\n\n".join(relevant_schema)
 
@@ -209,29 +219,39 @@ Provide the SQL query along with an explanation of how it answers the user's que
         join_conditions: Optional[List[JoinCandidate]] = None,
         constraints: Optional[List[str]] = None,
         lessons: Optional[List] = None,
+        table_name_mapping: Optional[Dict[str, str]] = None,
     ) -> str:
         """Generate prompt for refining SQL after execution error.
 
         Args:
             user_query: The original user query
             schema: Database schema
-            identified_tables: List of tables to use
+            identified_tables: List of tables to use (schema names)
             previous_sql: The SQL that failed
             error_message: The error message from BigQuery
             attempt_number: Current attempt number
             join_conditions: Optional join conditions
             constraints: Optional constraint strings from corrections
             lessons: Optional lessons learned from past queries
+            table_name_mapping: Optional mapping from schema names to actual DB table names
 
         Returns:
             Formatted prompt for SQL refinement
         """
-        # Format schema for relevant tables only
+        # Format schema for relevant tables (use original names for lookup)
         relevant_schema = []
         for table_name in identified_tables:
             table = schema.get_table(table_name)
             if table:
-                relevant_schema.append(table.to_schema_string())
+                schema_str = table.to_schema_string()
+
+                # If there's a table name transformation, add a note
+                if table_name_mapping and table_name in table_name_mapping:
+                    actual_name = table_name_mapping[table_name]
+                    if actual_name != table_name:
+                        schema_str += f"\n  → IMPORTANT: Use actual table name in SQL: {actual_name}"
+
+                relevant_schema.append(schema_str)
 
         schema_str = "\n\n".join(relevant_schema)
 

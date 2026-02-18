@@ -39,7 +39,7 @@ class SQLGenerator:
 
         Args:
             user_query: Original user query
-            identified_tables: List of table names to use
+            identified_tables: List of table names to use (schema names)
             join_conditions: Optional join conditions
             constraints: Optional constraints from corrections
             exploration_results: Optional exploration query results
@@ -55,15 +55,17 @@ class SQLGenerator:
         logger.info(f"Using tables: {identified_tables}")
 
         # Apply learned table transformations
-        transformed_tables = identified_tables
+        table_name_mapping = {}
         if self.apply_memory and self.table_mapper:
-            transformations = self.table_mapper.transform_multiple(identified_tables)
-            transformed_tables = list(transformations.values())
+            table_name_mapping = self.table_mapper.transform_multiple(identified_tables)
 
             # Log transformations
-            for original, transformed in transformations.items():
+            for original, transformed in table_name_mapping.items():
                 if original != transformed:
                     logger.info(f"Applied memory: {original} → {transformed}")
+        else:
+            # No transformations - identity mapping
+            table_name_mapping = {table: table for table in identified_tables}
 
         # Get relevant lessons for context
         lessons = []
@@ -74,15 +76,16 @@ class SQLGenerator:
             )
             logger.info(f"Retrieved {len(lessons)} relevant lessons")
 
-        # Generate SQL prompt with lessons
+        # Generate SQL prompt with table mapping
         prompt = PromptTemplates.sql_generation(
             user_query,
             self.schema,
-            transformed_tables,  # Use transformed table names
+            identified_tables,  # Pass original names for schema lookup
             join_conditions,
             constraints,
             exploration_results,
-            lessons=lessons,  # Include lessons
+            lessons=lessons,
+            table_name_mapping=table_name_mapping,  # Pass mapping separately
         )
 
         # Use with_structured_output for automatic schema enforcement
@@ -139,7 +142,7 @@ class SQLGenerator:
 
         Args:
             user_query: Original user query
-            identified_tables: List of table names to use
+            identified_tables: List of table names to use (schema names)
             previous_sql: The SQL that failed
             error_message: Error message from database
             attempt_number: Current attempt number
@@ -156,15 +159,17 @@ class SQLGenerator:
         logger.info(f"Refining SQL (attempt {attempt_number}) based on error: {error_message[:100]}...")
 
         # Apply learned table transformations
-        transformed_tables = identified_tables
+        table_name_mapping = {}
         if self.apply_memory and self.table_mapper:
-            transformations = self.table_mapper.transform_multiple(identified_tables)
-            transformed_tables = list(transformations.values())
+            table_name_mapping = self.table_mapper.transform_multiple(identified_tables)
 
             # Log transformations
-            for original, transformed in transformations.items():
+            for original, transformed in table_name_mapping.items():
                 if original != transformed:
                     logger.info(f"Applied memory: {original} → {transformed}")
+        else:
+            # No transformations - identity mapping
+            table_name_mapping = {table: table for table in identified_tables}
 
         # Get relevant lessons for context
         lessons = []
@@ -179,13 +184,14 @@ class SQLGenerator:
         prompt = PromptTemplates.sql_refinement(
             user_query,
             self.schema,
-            transformed_tables,  # Use transformed table names
+            identified_tables,  # Pass original names for schema lookup
             previous_sql,
             error_message,
             attempt_number,
             join_conditions,
             constraints,
-            lessons=lessons,  # Include lessons
+            lessons=lessons,
+            table_name_mapping=table_name_mapping,  # Pass mapping separately
         )
 
         # Use with_structured_output for automatic schema enforcement
