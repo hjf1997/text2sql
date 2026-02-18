@@ -350,10 +350,6 @@ class Text2SQLAgent:
 
         # Step 3: SQL Generation with Retry Loop
         logger.info("Step 3: Generating SQL with automatic retry...")
-        session.state_machine.transition_to(
-            AgentState.GENERATING_SQL,
-            reason="Creating SQL query"
-        )
         session.increment_iteration()
 
         # Get max SQL attempts from config
@@ -366,6 +362,12 @@ class Text2SQLAgent:
         # Retry loop for SQL generation and execution
         for attempt in range(1, max_sql_attempts + 1):
             try:
+                # Transition to GENERATING_SQL state for each attempt
+                session.state_machine.transition_to(
+                    AgentState.GENERATING_SQL,
+                    reason=f"Generating SQL (attempt {attempt}/{max_sql_attempts})"
+                )
+
                 logger.info(f"  SQL Attempt {attempt}/{max_sql_attempts}")
 
                 # Generate SQL (first attempt) or refine SQL (subsequent attempts)
@@ -392,13 +394,15 @@ class Text2SQLAgent:
 
                 logger.info(f"    ✓ SQL generated (attempt {attempt})")
 
+                # Transition to EXECUTING_QUERY state (whether we execute or not)
+                session.state_machine.transition_to(
+                    AgentState.EXECUTING_QUERY,
+                    reason=f"Validating and executing query (attempt {attempt})"
+                )
+
                 # Execute if requested
                 if execute:
                     logger.info(f"    Validating SQL (attempt {attempt})...")
-                    session.state_machine.transition_to(
-                        AgentState.EXECUTING_QUERY,
-                        reason=f"Running query (attempt {attempt})"
-                    )
 
                     # Validate first
                     validation = bigquery_client.validate_query(sql)
@@ -410,6 +414,7 @@ class Text2SQLAgent:
 
                         if attempt < max_sql_attempts:
                             logger.info(f"    Retrying with error feedback...")
+                            # Transition back to GENERATING_SQL for retry
                             continue
                         else:
                             raise ValidationError(f"SQL validation failed after {max_sql_attempts} attempts: {error_msg}")
@@ -426,6 +431,7 @@ class Text2SQLAgent:
 
                         if attempt < max_sql_attempts:
                             logger.info(f"    Retrying with error feedback...")
+                            # Transition back to GENERATING_SQL for retry
                             continue
                         else:
                             raise ValidationError(f"Query execution failed after {max_sql_attempts} attempts: {error_msg}")
