@@ -124,6 +124,10 @@ class QueryUnderstanding:
 
             return understanding
 
+        except AmbiguityError:
+            # Re-raise ambiguity errors so orchestrator can handle them
+            raise
+
         except Exception as e:
             logger.error(f"Query understanding failed: {str(e)}")
             # Return empty understanding as fallback
