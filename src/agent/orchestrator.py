@@ -55,7 +55,10 @@ class Text2SQLAgent:
             logger.info(f"✓ Loaded {len(self.schema.tables)} tables")
 
         # Initialize reasoning components
-        self.query_understanding = QueryUnderstanding(self.schema)
+        self.query_understanding = QueryUnderstanding(
+            self.schema,
+            ambiguity_threshold=settings.get("agent.table_ambiguity_threshold", 0.7)
+        )
         self.join_inference = JoinInference(
             self.schema,
             confidence_threshold=settings.get("agent.confidence_threshold", 0.75)

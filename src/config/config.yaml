@@ -41,7 +41,8 @@ agent:
   max_correction_attempts: 3
   enable_exploration_queries: true
   max_exploration_results: 100
-  confidence_threshold: 0.75  # for semantic join inference
+  confidence_threshold: 0.75  # Minimum confidence for accepting semantic join inference
+  table_ambiguity_threshold: 0.7  # Similarity threshold for detecting ambiguous table names (0.0-1.0)
 
 schema:
   schema_directory: ""  # Directory containing Excel files (one per table, filename = table name)
