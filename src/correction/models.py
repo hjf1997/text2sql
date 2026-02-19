@@ -11,6 +11,7 @@ class CorrectionType(Enum):
 
     JOIN_CLARIFICATION = "join_clarification"
     COLUMN_MAPPING = "column_mapping"
+    TABLE_SELECTION = "table_selection"
     FILTER_CLARIFICATION = "filter_clarification"
     BUSINESS_LOGIC = "business_logic"
     NATURAL_LANGUAGE = "natural_language"
@@ -59,6 +60,15 @@ class Correction:
                 f"COLUMN MAPPING: '{self.content.get('user_term')}' maps to "
                 f"'{self.content.get('actual_column')}'"
             )
+        elif self.correction_type == CorrectionType.TABLE_SELECTION:
+            selected = self.content.get('selected_table')
+            rejected = self.content.get('rejected_tables', [])
+            if rejected:
+                return (
+                    f"MANDATORY TABLE: Use table '{selected}'. "
+                    f"DO NOT use: {', '.join(rejected)}"
+                )
+            return f"MANDATORY TABLE: Use table '{selected}'"
         elif self.correction_type == CorrectionType.FILTER_CLARIFICATION:
             return f"FILTER REQUIREMENT: {self.content.get('filter_description')}"
         elif self.correction_type == CorrectionType.BUSINESS_LOGIC:
@@ -137,6 +147,33 @@ class NaturalLanguageCorrection(Correction):
             correction_type=CorrectionType.NATURAL_LANGUAGE,
             content={
                 "correction": correction_text,
+            },
+            description=description,
+        )
+
+
+@dataclass
+class TableSelectionCorrection(Correction):
+    """Specific correction for table selection."""
+
+    def __init__(
+        self,
+        selected_table: str,
+        rejected_tables: Optional[list[str]] = None,
+        description: Optional[str] = None,
+    ):
+        """Initialize table selection correction.
+
+        Args:
+            selected_table: The table that should be used
+            rejected_tables: Optional list of tables that should NOT be used
+            description: Optional description
+        """
+        super().__init__(
+            correction_type=CorrectionType.TABLE_SELECTION,
+            content={
+                "selected_table": selected_table,
+                "rejected_tables": rejected_tables or [],
             },
             description=description,
         )

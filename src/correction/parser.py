@@ -7,6 +7,7 @@ from .models import (
     CorrectionType,
     JoinClarification,
     ColumnMapping,
+    TableSelectionCorrection,
     NaturalLanguageCorrection,
 )
 from ..utils import CorrectionError, setup_logger
@@ -35,6 +36,7 @@ class CorrectionParser:
         # Try to detect structured correction types
         correction = (
             CorrectionParser._try_parse_join(user_input)
+            or CorrectionParser._try_parse_table_selection(user_input)
             or CorrectionParser._try_parse_column_mapping(user_input)
             or CorrectionParser._parse_natural_language(user_input)
         )
@@ -62,6 +64,13 @@ class CorrectionParser:
                 return JoinClarification(
                     tables=correction_dict.get("tables", []),
                     join_condition=correction_dict.get("join_condition", ""),
+                    description=correction_dict.get("description"),
+                )
+
+            elif corr_type == "table" or corr_type == "table_selection":
+                return TableSelectionCorrection(
+                    selected_table=correction_dict.get("selected_table", ""),
+                    rejected_tables=correction_dict.get("rejected_tables"),
                     description=correction_dict.get("description"),
                 )
 
@@ -120,6 +129,42 @@ class CorrectionParser:
                 tables=[table1, table2],
                 join_condition=f"{table1}.{col1} = {table2}.{col2}",
             )
+
+        return None
+
+    @staticmethod
+    def _try_parse_table_selection(user_input: str) -> Union[TableSelectionCorrection, None]:
+        """Try to parse as table selection correction.
+
+        Patterns:
+        - "use table CustomersPROD"
+        - "select CustomersPROD not Customers"
+        - "table CustomersPROD"
+        """
+        # Pattern 1: "use table X"
+        pattern1 = r"use\s+table\s+(\w+)"
+        match = re.search(pattern1, user_input, re.IGNORECASE)
+        if match:
+            selected = match.group(1)
+            return TableSelectionCorrection(selected_table=selected)
+
+        # Pattern 2: "select X not Y" or "select X not Y, Z"
+        pattern2 = r"select\s+(\w+)\s+not\s+([\w,\s]+)"
+        match = re.search(pattern2, user_input, re.IGNORECASE)
+        if match:
+            selected = match.group(1)
+            rejected = [t.strip() for t in match.group(2).split(',')]
+            return TableSelectionCorrection(
+                selected_table=selected,
+                rejected_tables=rejected
+            )
+
+        # Pattern 3: Simple "table X" (must be at start or end to avoid false positives)
+        pattern3 = r"(?:^|\s)table\s+(\w+)(?:\s|$)"
+        match = re.search(pattern3, user_input, re.IGNORECASE)
+        if match and len(user_input.split()) <= 3:  # Only if it's a short command
+            selected = match.group(1)
+            return TableSelectionCorrection(selected_table=selected)
 
         return None
 

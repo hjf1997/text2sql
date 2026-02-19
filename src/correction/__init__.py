@@ -5,6 +5,7 @@ from .models import (
     CorrectionType,
     JoinClarification,
     ColumnMapping,
+    TableSelectionCorrection,
     NaturalLanguageCorrection,
 )
 from .parser import CorrectionParser
@@ -14,6 +15,7 @@ __all__ = [
     "CorrectionType",
     "JoinClarification",
     "ColumnMapping",
+    "TableSelectionCorrection",
     "NaturalLanguageCorrection",
     "CorrectionParser",
 ]

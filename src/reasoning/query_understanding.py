@@ -5,6 +5,7 @@ from difflib import SequenceMatcher
 from ..schema import Schema
 from ..llm import llm_client, PromptTemplates
 from ..core import Session
+from ..correction.models import CorrectionType
 from ..utils import setup_logger, AmbiguityError
 from ..config import settings
 from .output_schemas import QueryUnderstandingOutput
@@ -76,8 +77,34 @@ class QueryUnderstanding:
                     f"Some tables not found in schema: {invalid_tables}"
                 )
 
+            # Apply table selection corrections if present
+            has_table_corrections = False
+            if session and session.corrections:
+                table_corrections = [
+                    c for c in session.corrections
+                    if c.correction_type == CorrectionType.TABLE_SELECTION
+                ]
+                if table_corrections:
+                    valid_tables = self._apply_table_corrections(
+                        valid_tables,
+                        table_corrections
+                    )
+                    has_table_corrections = True
+                    logger.info(
+                        f"Applied {len(table_corrections)} table correction(s), "
+                        f"resulting in {len(valid_tables)} table(s)"
+                    )
+
             # Check for table selection ambiguity
-            self._check_table_ambiguity(user_query, valid_tables)
+            # Only check when:
+            # 1. Multiple tables selected AND no join is needed
+            # 2. No table corrections have been applied (user already resolved ambiguity)
+            if (len(valid_tables) > 1 and not output.joins_needed
+                and not has_table_corrections):
+                logger.info(
+                    f"Checking table selection ambiguity for {len(valid_tables)} tables (no join needed)"
+                )
+                self._check_table_ambiguity(user_query, valid_tables)
 
             # Convert to dictionary
             understanding = {
@@ -140,6 +167,45 @@ class QueryUnderstanding:
                         "type": "table_selection",
                     },
                 )
+
+    def _apply_table_corrections(
+        self,
+        identified_tables: List[str],
+        corrections: List,
+    ) -> List[str]:
+        """Apply table selection corrections to override LLM selections.
+
+        Args:
+            identified_tables: Tables identified by LLM
+            corrections: User corrections from session
+
+        Returns:
+            Corrected table list
+        """
+        corrected_tables = identified_tables.copy()
+
+        for correction in corrections:
+            if correction.correction_type == CorrectionType.TABLE_SELECTION:
+                selected = correction.content.get("selected_table")
+                rejected = correction.content.get("rejected_tables", [])
+
+                # Remove rejected tables
+                corrected_tables = [t for t in corrected_tables if t not in rejected]
+
+                # Add selected table if not present and if it exists in schema
+                if selected and selected not in corrected_tables:
+                    if self.schema.get_table(selected):
+                        corrected_tables.append(selected)
+                        logger.info(f"Applied table correction: added '{selected}'")
+                    else:
+                        logger.warning(
+                            f"Table correction specified '{selected}' but table not found in schema"
+                        )
+
+                if rejected:
+                    logger.info(f"Applied table correction: rejected {rejected}")
+
+        return corrected_tables
 
     def _find_similar_tables(self, table_name: str) -> List[Dict[str, any]]:
         """Find tables in schema similar to the given table name.
