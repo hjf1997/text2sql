@@ -96,15 +96,27 @@ class QueryUnderstanding:
                     )
 
             # Check for table selection ambiguity
-            # Only check when:
-            # 1. Multiple tables selected AND no join is needed
-            # 2. No table corrections have been applied (user already resolved ambiguity)
+            # Only check when: multiple tables + no joins needed + no corrections applied
+            # Trust LLM when it picks a single table (no proactive schema checking)
             if (len(valid_tables) > 1 and not output.joins_needed
                 and not has_table_corrections):
-                logger.info(
-                    f"Checking table selection ambiguity for {len(valid_tables)} tables (no join needed)"
+                # Multiple tables identified but no joins needed = AMBIGUITY
+                # A simple query should only use one table - LLM is confused
+                logger.warning(
+                    f"Table selection ambiguity: {len(valid_tables)} tables identified "
+                    f"but no joins needed - query should use only one table"
                 )
-                self._check_table_ambiguity(user_query, valid_tables)
+                raise AmbiguityError(
+                    f"Multiple tables identified but query does not require joins. "
+                    f"Please specify which single table to use.",
+                    options=[f"{t} - Identified by LLM" for t in valid_tables],
+                    context={
+                        "user_query": user_query,
+                        "selected_table": valid_tables[0],  # First as default
+                        "similar_tables": valid_tables,
+                        "type": "table_selection",
+                    },
+                )
 
             # Convert to dictionary
             understanding = {
@@ -143,6 +155,9 @@ class QueryUnderstanding:
 
     def _check_table_ambiguity(self, user_query: str, identified_tables: List[str]) -> None:
         """Check if identified tables have ambiguous alternatives in the schema.
+
+        NOTE: This method is currently NOT USED. We trust LLM single-table selections.
+        Kept for potential future use if proactive similarity checking is needed.
 
         Args:
             user_query: The user's query
