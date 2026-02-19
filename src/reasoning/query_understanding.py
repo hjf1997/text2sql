@@ -151,7 +151,8 @@ class QueryUnderstanding:
             List of similar tables with similarity info
         """
         similar_tables = []
-        all_table_names = [t.name for t in self.schema.tables]
+        # schema.tables is a dict, iterate over values to get Table objects
+        all_table_names = [t.name for t in self.schema.tables.values()]
 
         for schema_table_name in all_table_names:
             # Calculate similarity
