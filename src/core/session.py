@@ -13,6 +13,16 @@ from ..utils import SessionError, setup_logger
 logger = setup_logger(__name__)
 
 
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects."""
+
+    def default(self, obj):
+        """Convert datetime objects to ISO format strings."""
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+
 class Session:
     """Represents an agent execution session with full state tracking."""
 
@@ -287,7 +297,7 @@ class SessionManager:
         try:
             session_file = self._get_session_file(session.session_id)
             with open(session_file, 'w') as f:
-                json.dump(session.to_dict(), f, indent=2)
+                json.dump(session.to_dict(), f, indent=2, cls=DateTimeEncoder)
 
             logger.debug(f"Saved session {session.session_id}")
 
