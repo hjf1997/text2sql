@@ -12,17 +12,30 @@ This diagram shows the complete end-to-end workflow from user query to SQL execu
 flowchart TD
     Start([User Query]) --> Init[State: INITIALIZING]
     Init --> LoadSchema[State: SCHEMA_LOADING<br/>Load schema from Excel files]
-    LoadSchema --> QueryUnderstand[State: QUERY_UNDERSTANDING<br/>Analyze user query with LLM]
+    LoadSchema --> QueryUnderstand[State: QUERY_UNDERSTANDING]
 
-    QueryUnderstand --> ValidateTables{Valid tables<br/>found?}
-    ValidateTables -->|No| Error1[Return Error]
-    ValidateTables -->|Yes| CheckCorrections{Session has<br/>corrections?}
+    QueryUnderstand --> FilterCorrections[Filter tables by corrections<br/>if user provided any]
+    FilterCorrections --> Phase1Start[Phase 1: ITERATIVE TABLE EVALUATION]
 
-    CheckCorrections -->|Yes| ApplyCorrections[Apply table corrections<br/>Remove rejected, add selected]
-    CheckCorrections -->|No| CheckAmbiguity
-    ApplyCorrections --> CheckAmbiguity
+    Phase1Start --> LoopTables[Loop through each table]
+    LoopTables --> EvalTable[Evaluate single table with LLM<br/>TableRelevanceOutput:<br/>- is_relevant<br/>- confidence<br/>- relevant_columns<br/>- reasoning]
 
-    CheckAmbiguity{Multiple tables<br/>+ No joins<br/>+ No corrections?}
+    EvalTable --> CollectCandidate{Is relevant?}
+    CollectCandidate -->|Yes| AddCandidate[Add to candidate list<br/>with columns]
+    CollectCandidate -->|No| NextTable1{More tables?}
+    AddCandidate --> NextTable1
+    NextTable1 -->|Yes| LoopTables
+    NextTable1 -->|No| CheckCandidates{Candidates<br/>found?}
+
+    CheckCandidates -->|No| Error1[Return Error:<br/>No relevant tables]
+    CheckCandidates -->|Yes| CheckMultiple{Multiple<br/>candidates?}
+
+    CheckMultiple -->|Yes| Phase2[Phase 2: REFINEMENT<br/>Review all selected tables together<br/>TableRefinementOutput:<br/>- final_tables<br/>- removed_tables<br/>- reasoning]
+    CheckMultiple -->|No| Phase3
+
+    Phase2 --> Phase3[Phase 3: SYNTHESIS<br/>Determine query requirements<br/>QueryUnderstandingOutput:<br/>- joins_needed<br/>- filters<br/>- aggregations<br/>- ordering]
+
+    Phase3 --> CheckAmbiguity{Multiple tables<br/>+ No joins<br/>+ No corrections?}
     CheckAmbiguity -->|Yes| RaiseAmbiguity[Raise AmbiguityError<br/>LLM CONFUSION<br/>State: AWAITING_CORRECTION]
     RaiseAmbiguity --> WaitCorrection[Wait for user correction]
     WaitCorrection --> QueryUnderstand
@@ -69,18 +82,55 @@ flowchart TD
     style RaiseJoinAmbig fill:#fff4e1
     style ApplyMemory fill:#e1f0ff
     style Learn fill:#e1f0ff
+    style Phase1Start fill:#fff4e1
+    style EvalTable fill:#fff4e1
+    style Phase2 fill:#fff4e1
+    style Phase3 fill:#fff4e1
 ```
 
 ### Key States:
 - **INITIALIZING**: Agent starts up
 - **SCHEMA_LOADING**: Load database schema
-- **QUERY_UNDERSTANDING**: Analyze user query
+- **QUERY_UNDERSTANDING**: Analyze user query (Three-phase approach)
 - **INFERRING_JOINS**: Infer join conditions
 - **GENERATING_SQL**: Generate SQL query
 - **EXECUTING_QUERY**: Validate and execute
 - **AWAITING_CORRECTION**: Waiting for user input
 - **COMPLETED**: Success
 - **FAILED**: Error state
+
+### Query Understanding - Three-Phase Approach:
+
+The table identification process uses three phases to solve token limit issues:
+
+**Phase 1: Iterative Table Evaluation**
+- Loop through each table individually
+- Call LLM for each table with only that table's schema
+- LLM returns: `is_relevant`, `confidence`, `relevant_columns`, `reasoning`
+- Collect all candidate tables with their relevant columns
+- **LLM calls**: N (one per table)
+
+**Phase 2: Refinement** (only if multiple candidates)
+- Put all selected tables together in one prompt
+- LLM reviews them simultaneously and performs final filtering
+- Removes tables that aren't actually needed when seen together
+- Catches over-selection from Phase 1 individual evaluation
+- **LLM calls**: 1
+
+**Phase 3: Requirements Synthesis**
+- Call LLM with final table list + relevant columns
+- Determine: `joins_needed`, `filters`, `aggregations`, `ordering`
+- Generate comprehensive reasoning combining all phases
+- **LLM calls**: 1
+
+**Total LLM calls**: N+2 (N for Phase 1, 1 for Phase 2, 1 for Phase 3)
+
+**Key benefits**:
+- Solves token limit problem (4000 tokens per call)
+- Scalable to large schemas with many tables
+- More focused LLM context per decision
+- Better reasoning transparency
+- Session checkpointing preserves progress between calls
 
 ---
 
@@ -178,20 +228,20 @@ This diagram shows how the system detects and resolves ambiguities through user 
 ```mermaid
 flowchart TD
     subgraph TableSelection["Table Selection Ambiguity (NEW)"]
-        QU1[Query Understanding] --> CheckJoins1{Joins<br/>needed?}
+        QU1[Query Understanding:<br/>Three-phase table identification<br/>Phase 1 → Phase 2 → Phase 3] --> CheckJoins1{Joins<br/>needed?}
         CheckJoins1 -->|Yes| ContinueTable[Continue to SQL generation<br/>Trust LLM decision]
         CheckJoins1 -->|No| CheckTableCorrections{Table corrections<br/>applied?}
         CheckTableCorrections -->|Yes| SkipTableCheck1[Skip ambiguity check<br/>User already resolved]
         SkipTableCheck1 --> ContinueTable
 
-        CheckTableCorrections -->|No| CheckTableCount{Multiple<br/>tables identified?}
+        CheckTableCorrections -->|No| CheckTableCount{Multiple<br/>tables in final list?}
 
-        CheckTableCount -->|Yes| RaiseAmbiguity[Raise AmbiguityError<br/>LLM CONFUSION:<br/>Multiple tables but no joins<br/>Query should use ONE table]
+        CheckTableCount -->|Yes| RaiseAmbiguity[Raise AmbiguityError<br/>LLM CONFUSION:<br/>Multiple tables but no joins<br/>Query should use ONE table<br/>Note: Phase 2 refinement already attempted]
 
         CheckTableCount -->|No| TrustLLM[Trust LLM decision<br/>Single table selected]
         TrustLLM --> ContinueTable
 
-        RaiseAmbiguity --> ErrorDetails[type: table_selection<br/>options: identified tables<br/>context: selected_table]
+        RaiseAmbiguity --> ErrorDetails[type: table_selection<br/>options: final tables from Phase 2/3<br/>context: selected_table]
     end
 
     subgraph JoinInference["Join Inference Ambiguity (EXISTING)"]
@@ -256,19 +306,24 @@ flowchart TD
 
 #### 1. Table Selection Ambiguity (NEW)
 
-**LLM Confusion Detection**
-- **Trigger**: LLM identified multiple tables + No joins needed
+**LLM Confusion Detection** (happens AFTER three-phase table identification)
+- **Trigger**: Final table list contains multiple tables + No joins needed
 - **Detection**: Simple count check (no fuzzy matching needed)
 - **Logic**: If query doesn't need joins, it should use ONE table. Multiple tables = confused LLM
 - **Philosophy**: Trust LLM when it picks a single table. Only intervene when LLM is obviously confused.
+- **Three-Phase Context**:
+  - Phase 1 evaluates each table individually and may over-select
+  - Phase 2 refinement reviews all candidates together and removes unnecessary tables
+  - If Phase 2 still leaves multiple tables AND joins_needed=False, that's ambiguous
 - **Example**:
   ```
   User: "Show customer data"
-  LLM returns: ["Customers", "PROD_Customers"]
-  Joins needed: No
+  Phase 1 returns: ["Customers", "PROD_Customers"]
+  Phase 2 refinement: Still both tables (couldn't decide)
+  Phase 3 synthesis: Joins needed = No
   → AMBIGUOUS! Raise error with both tables as options
   ```
-- **Action**: Raise `AmbiguityError` with identified tables as options
+- **Action**: Raise `AmbiguityError` with final tables as options
 
 #### 2. Join Inference Ambiguity (EXISTING)
 - **Trigger**: Multiple join candidates + Low confidence (<0.75)
@@ -347,6 +402,9 @@ flowchart TD
 Key settings in `config/config.yaml`:
 
 ```yaml
+connectchain:
+  max_tokens: 4000                       # Token limit per LLM call (ConnectChain constraint)
+
 agent:
   max_sql_attempts: 3                    # SQL generation retry limit
   max_correction_attempts: 3             # User correction retry limit
@@ -354,11 +412,23 @@ agent:
   table_ambiguity_threshold: 0.7         # [NOT USED] Reserved for future use
 ```
 
-**Note**: `table_ambiguity_threshold` is currently not used because we trust LLM's single-table selections without proactive similarity checking. The parameter is reserved for future enhancements if needed.
+**Notes**:
+- **Token limit**: Each LLM call is limited to 4000 tokens. This is why table identification uses a three-phase iterative approach instead of sending all table schemas in one prompt.
+- **table_ambiguity_threshold**: Currently not used because we trust LLM's final table selections from Phase 2 refinement. Only intervene when multiple tables are selected for non-join queries. The parameter is reserved for future enhancements if needed.
+- **Three-phase overhead**: With N tables, query understanding requires N+2 LLM calls instead of 1. Session checkpointing preserves progress between calls to handle failures gracefully.
 
 ## Related Files
 
 - Main workflow: [`src/agent/orchestrator.py`](src/agent/orchestrator.py)
 - Memory system: [`src/memory/`](src/memory/)
-- Ambiguity detection: [`src/reasoning/query_understanding.py`](src/reasoning/query_understanding.py), [`src/reasoning/join_inference.py`](src/reasoning/join_inference.py)
+- Query understanding (three-phase): [`src/reasoning/query_understanding.py`](src/reasoning/query_understanding.py)
+- Structured output schemas: [`src/reasoning/output_schemas.py`](src/reasoning/output_schemas.py)
+  - `TableRelevanceOutput` - Phase 1 table evaluation
+  - `TableRefinementOutput` - Phase 2 refinement
+  - `QueryUnderstandingOutput` - Phase 3 synthesis
+- Prompt templates: [`src/llm/prompts.py`](src/llm/prompts.py)
+  - `table_relevance_evaluation()` - Phase 1 prompt
+  - `table_refinement()` - Phase 2 prompt
+  - `query_requirements_synthesis()` - Phase 3 prompt
+- Join inference: [`src/reasoning/join_inference.py`](src/reasoning/join_inference.py)
 - Corrections: [`src/correction/`](src/correction/)
