@@ -20,13 +20,13 @@ class FirewallChecker:
     BLOCK_ERROR_PATTERN = "violate Company policy"
 
     # Timeout for checking (seconds) - if no error within this time, consider it passed
-    DEFAULT_TIMEOUT = 2.0
+    DEFAULT_TIMEOUT = 5.0
 
     def __init__(self, timeout: float = DEFAULT_TIMEOUT):
         """Initialize firewall checker.
 
         Args:
-            timeout: Timeout in seconds to wait for response (default: 2.0)
+            timeout: Timeout in seconds to wait for response (default: 5.0)
         """
         self.timeout = timeout
         self.checked_count = 0
@@ -77,7 +77,7 @@ class FirewallChecker:
             # Got a response within timeout - it passed
             elapsed = time.time() - start_time
             self.checked_count += 1
-            logger.debug(f"✓ Description passed firewall check (took {elapsed:.2f}s)")
+            logger.debug(f"✅ Description passed firewall check (took {elapsed:.2f}s)")
             return {"checked": True, "blocked": False, "error": None}
 
         except asyncio.TimeoutError:
@@ -86,7 +86,7 @@ class FirewallChecker:
             # This means the LLM is processing the request normally without immediate rejection
             self.checked_count += 1
             logger.debug(
-                f"✓ Description passed firewall check (no error within {self.timeout}s timeout)"
+                f"⚠️ Description passed firewall check (no error within {self.timeout}s timeout)"
             )
             return {"checked": True, "blocked": False, "error": None}
 
@@ -97,7 +97,7 @@ class FirewallChecker:
             if self.BLOCK_ERROR_PATTERN.lower() in error_str.lower():
                 self.checked_count += 1
                 self.blocked_count += 1
-                logger.warning(f"✗ Description blocked by firewall: {description[:50]}...")
+                logger.warning(f"❌ Description blocked by firewall: {description[:50]}...")
                 return {"checked": True, "blocked": True, "error": error_str}
             else:
                 # Other errors - consider as unchecked
@@ -152,10 +152,10 @@ class FirewallChecker:
 
             if result["blocked"]:
                 logger.warning(
-                    f"  ⚠️  Column '{col_name}' description blocked by firewall"
+                    f"  ❌ Column '{col_name}' description blocked by firewall"
                 )
             elif result["checked"]:
-                logger.debug(f"  ✓ Column '{col_name}' description passed")
+                logger.debug(f"  ✅ Column '{col_name}' description passed")
 
             # Small delay between checks to avoid rate limiting
             time.sleep(0.1)
