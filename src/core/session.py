@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, date, time, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from .state_machine import AgentStateMachine, AgentState
@@ -14,12 +14,14 @@ logger = setup_logger(__name__)
 
 
 class DateTimeEncoder(json.JSONEncoder):
-    """Custom JSON encoder that handles datetime objects."""
+    """Custom JSON encoder that handles datetime, date, time, and timedelta objects."""
 
     def default(self, obj):
-        """Convert datetime objects to ISO format strings."""
-        if isinstance(obj, datetime):
+        """Convert datetime-related objects to ISO format strings."""
+        if isinstance(obj, (datetime, date, time)):
             return obj.isoformat()
+        elif isinstance(obj, timedelta):
+            return obj.total_seconds()
         return super().default(obj)
 
 

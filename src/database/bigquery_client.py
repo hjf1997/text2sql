@@ -37,19 +37,18 @@ class BigQueryClient:
         self.dataset = dataset or bq_config["dataset"]
         self.location = location or bq_config.get("location", "US")
         self.query_timeout = bq_config.get("query_timeout", 300)
-        self.max_bytes_billed = bq_config.get("max_bytes_billed")
 
         # Initialize client
         try:
             if credentials_path or bq_config.get("credentials_path"):
-                from google.oauth2 import service_account
-                creds_path = credentials_path or bq_config["credentials_path"]
-                credentials = service_account.Credentials.from_service_account_file(
-                    creds_path
-                )
+                # from google.oauth2 import service_account
+                # creds_path = credentials_path or bq_config["credentials_path"]
+                # credentials = service_account.Credentials.from_service_account_file(
+                #     creds_path
+                # )
                 self.client = bigquery.Client(
                     project=self.project_id,
-                    credentials=credentials,
+                    # credentials=credentials,
                     location=self.location,
                 )
             else:
@@ -105,9 +104,6 @@ class BigQueryClient:
                 use_legacy_sql=False,
                 dry_run=dry_run,
             )
-
-            if self.max_bytes_billed:
-                job_config.maximum_bytes_billed = self.max_bytes_billed
 
             # Execute query
             query_job = self.client.query(

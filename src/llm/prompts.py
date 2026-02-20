@@ -35,6 +35,150 @@ TASK:
 """
 
     @staticmethod
+    def table_relevance_evaluation(
+        user_query: str,
+        table,
+        already_selected_tables: Optional[List[str]] = None
+    ) -> str:
+        """Generate prompt for evaluating single table relevance (Phase 1).
+
+        Args:
+            user_query: The user's natural language query
+            table: Single Table object to evaluate
+            already_selected_tables: Tables already identified as relevant (for context)
+
+        Returns:
+            Formatted prompt
+        """
+        context_str = ""
+        if already_selected_tables:
+            context_str = f"""
+TABLES ALREADY IDENTIFIED AS RELEVANT:
+{', '.join(already_selected_tables)}
+
+NOTE: The table you're evaluating below is DIFFERENT from these already-selected tables.
+Consider whether this NEW table adds value beyond what's already selected.
+"""
+
+        return f"""You are a database query analyzer. Evaluate whether the following table is relevant for answering the user's query.
+
+USER QUERY:
+{user_query}
+{context_str}
+TABLE TO EVALUATE:
+{table.to_schema_string()}
+
+TASK:
+1. Determine if this table is needed to answer the user query
+2. If relevant, identify which specific columns from this table are needed
+3. Assign a confidence score (0.0 to 1.0) to your decision
+4. Explain your reasoning
+
+GUIDELINES:
+- A table is relevant if it contains data directly needed to answer the query
+- Consider table description, column names, business names, and data types
+- If the query can be fully answered with already-selected tables, this table may not be needed
+- Be conservative: only mark as relevant if truly necessary
+- Even if a table seems related, it's not relevant unless it's actually needed for THIS specific query
+"""
+
+    @staticmethod
+    def table_refinement(
+        user_query: str,
+        schema: Schema,
+        selected_tables: List[str]
+    ) -> str:
+        """Generate prompt for refining selected tables by reviewing them together (Phase 2).
+
+        Args:
+            user_query: The user's natural language query
+            schema: The database schema
+            selected_tables: List of table names selected in Phase 1
+
+        Returns:
+            Formatted prompt
+        """
+        # Get schemas for all selected tables
+        table_schemas = []
+        for table_name in selected_tables:
+            table = schema.get_table(table_name)
+            if table:
+                table_schemas.append(table.to_schema_string())
+
+        tables_context = "\n\n".join(table_schemas)
+
+        return f"""You are a database query analyzer. Review the selected tables and determine which ones are actually needed.
+
+USER QUERY:
+{user_query}
+
+SELECTED TABLES (from Phase 1 individual evaluation):
+{tables_context}
+
+TASK:
+Now that you can see ALL selected tables together, review them and identify:
+1. Which tables are ACTUALLY needed to answer the query
+2. Which tables can be REMOVED (redundant or unnecessary)
+3. Explain your reasoning for keeping/removing each table
+
+GUIDELINES:
+- Some tables might have been over-selected during individual evaluation
+- Consider table relationships and overlaps
+- Remove tables that don't directly contribute to answering the query
+- Keep only the minimal set of tables needed
+- If multiple tables contain similar data, choose the most appropriate one
+"""
+
+    @staticmethod
+    def query_requirements_synthesis(
+        user_query: str,
+        relevant_tables: List[str],
+        table_columns_map: Dict[str, List[str]]
+    ) -> str:
+        """Generate prompt for synthesizing query requirements after table selection (Phase 3).
+
+        Args:
+            user_query: The user's natural language query
+            relevant_tables: List of relevant table names
+            table_columns_map: Map of table_name -> [column_names]
+
+        Returns:
+            Formatted prompt
+        """
+        # Format tables and columns
+        tables_info = []
+        for table in relevant_tables:
+            cols = table_columns_map.get(table, [])
+            if cols:
+                tables_info.append(f"- {table}: {', '.join(cols)}")
+            else:
+                tables_info.append(f"- {table}: (all columns)")
+
+        tables_str = '\n'.join(tables_info)
+
+        return f"""You are a database query analyzer. Based on the relevant tables and columns identified, determine the query requirements.
+
+USER QUERY:
+{user_query}
+
+RELEVANT TABLES AND COLUMNS:
+{tables_str}
+
+TASK:
+1. Determine if joins between tables are required (true/false)
+2. Identify filter conditions needed (describe in natural language)
+3. Identify aggregations needed: COUNT, SUM, AVG, MIN, MAX, etc. (describe in natural language)
+4. Identify ordering requirements: ASC/DESC, which columns (describe in natural language)
+5. Provide overall reasoning for your analysis
+
+GUIDELINES:
+- If multiple tables are selected, joins are usually needed (but not always - check carefully)
+- Consider the user's intent for filters, grouping, and sorting
+- Be specific about requirements but use natural language descriptions
+- Focus on WHAT is needed, not HOW to implement it in SQL
+"""
+
+    @staticmethod
     def join_inference(
         table1: str,
         table2: str,

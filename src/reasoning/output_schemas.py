@@ -65,6 +65,52 @@ class QueryUnderstandingOutput(BaseModel):
     )
 
 
+class TableRelevanceOutput(BaseModel):
+    """Schema for single table relevance evaluation output from LLM."""
+
+    is_relevant: bool = Field(
+        description="Whether this table is needed to answer the user query"
+    )
+
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Confidence in the relevance decision (0-1)"
+    )
+
+    relevant_columns: List[str] = Field(
+        default_factory=list,
+        description="Column names from this table needed for the query (if relevant)"
+    )
+
+    reasoning: str = Field(
+        description="Explanation for why this table is or is not relevant"
+    )
+
+    @field_validator('confidence')
+    @classmethod
+    def validate_confidence(cls, v):
+        """Ensure confidence is between 0 and 1."""
+        return max(0.0, min(1.0, v))
+
+
+class TableRefinementOutput(BaseModel):
+    """Schema for refining selected tables by reviewing them together."""
+
+    final_tables: List[str] = Field(
+        description="Final list of table names needed after refinement"
+    )
+
+    removed_tables: List[str] = Field(
+        default_factory=list,
+        description="Tables removed during refinement (if any)"
+    )
+
+    reasoning: str = Field(
+        description="Explanation for the refinement decisions"
+    )
+
+
 class SQLGenerationOutput(BaseModel):
     """Schema for SQL generation output from LLM."""
 

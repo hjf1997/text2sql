@@ -8,7 +8,11 @@ from ..core import Session
 from ..correction.models import CorrectionType
 from ..utils import setup_logger, AmbiguityError
 from ..config import settings
-from .output_schemas import QueryUnderstandingOutput
+from .output_schemas import (
+    QueryUnderstandingOutput,
+    TableRelevanceOutput,
+    TableRefinementOutput,
+)
 
 logger = setup_logger(__name__)
 
@@ -33,7 +37,11 @@ class QueryUnderstanding:
         user_query: str,
         session: Optional[Session] = None,
     ) -> Dict[str, any]:
-        """Analyze user query to identify tables, columns, and requirements.
+        """Analyze user query to identify tables, columns, and requirements using three-phase approach.
+
+        Phase 1: Iterative table evaluation (one table at a time)
+        Phase 2: Refinement (review all selected tables together)
+        Phase 3: Requirements synthesis (joins, filters, aggregations)
 
         Args:
             user_query: Natural language query
@@ -51,86 +59,226 @@ class QueryUnderstanding:
         """
         logger.info(f"Analyzing query: {user_query}")
 
-        # Generate understanding prompt
-        prompt = PromptTemplates.query_understanding(user_query, self.schema)
-
-        # Use with_structured_output for automatic schema enforcement
         try:
-            output = llm_client.with_structured_output(
-                schema=QueryUnderstandingOutput,
-                messages=[
-                    {"role": "system", "content": PromptTemplates.system_message()},
-                    {"role": "user", "content": prompt},
-                ],
-                session=session,
+            # Apply corrections first to filter tables
+            tables_to_evaluate, has_table_corrections = self._filter_tables_by_corrections(session)
+
+            # PHASE 1: Evaluate each table individually
+            logger.info(f"Phase 1: Evaluating {len(tables_to_evaluate)} tables individually")
+            candidate_tables = []
+            table_columns_map = {}
+            table_relevance_details = []
+
+            for i, table_name in enumerate(tables_to_evaluate, 1):
+                table = self.schema.get_table(table_name)
+                if not table:
+                    logger.warning(f"Table {table_name} not found in schema")
+                    continue
+
+                logger.info(f"[{i}/{len(tables_to_evaluate)}] Evaluating table: {table_name}")
+
+                try:
+                    # Generate prompt for this specific table
+                    prompt = PromptTemplates.table_relevance_evaluation(
+                        user_query=user_query,
+                        table=table,
+                        already_selected_tables=candidate_tables
+                    )
+
+                    # Call LLM for structured output
+                    relevance_output = llm_client.with_structured_output(
+                        schema=TableRelevanceOutput,
+                        messages=[
+                            {"role": "system", "content": PromptTemplates.system_message()},
+                            {"role": "user", "content": prompt},
+                        ],
+                        session=session,
+                    )
+
+                    # Store details for reasoning
+                    table_relevance_details.append({
+                        "table": table_name,
+                        "is_relevant": relevance_output.is_relevant,
+                        "confidence": relevance_output.confidence,
+                        "reasoning": relevance_output.reasoning,
+                    })
+
+                    # Add to candidate tables if LLM says so
+                    if relevance_output.is_relevant:
+                        candidate_tables.append(table_name)
+                        table_columns_map[table_name] = relevance_output.relevant_columns
+
+                        logger.info(
+                            f"  ✓ RELEVANT (confidence: {relevance_output.confidence:.2f})"
+                        )
+                    else:
+                        logger.info(
+                            f"  ✗ Not relevant (confidence: {relevance_output.confidence:.2f})"
+                        )
+
+                except Exception as e:
+                    logger.error(f"Error evaluating table {table_name}: {str(e)}")
+                    # Continue with other tables
+                    continue
+
+            # Check if we found any tables
+            if not candidate_tables:
+                logger.warning("No relevant tables identified in Phase 1")
+                return {
+                    "tables": [],
+                    "columns": [],
+                    "joins_needed": False,
+                    "filters": None,
+                    "aggregations": None,
+                    "ordering": None,
+                    "reasoning": "No relevant tables found for the query",
+                }
+
+            logger.info(
+                f"Phase 1 complete: {len(candidate_tables)} candidate table(s) identified: "
+                f"{candidate_tables}"
             )
 
-            # Validate tables against schema
-            valid_tables = [
-                t for t in output.tables
-                if self.schema.get_table(t)
-            ]
+            # PHASE 2: Refine by reviewing all selected tables together
+            logger.info(f"Phase 2: Refining {len(candidate_tables)} candidate tables")
+            final_tables = candidate_tables
+            refinement_reasoning = ""
 
-            if len(valid_tables) < len(output.tables):
-                invalid_tables = set(output.tables) - set(valid_tables)
-                logger.warning(
-                    f"Some tables not found in schema: {invalid_tables}"
+            if len(candidate_tables) > 1:
+                # Only run refinement if multiple tables selected
+                try:
+                    refinement_prompt = PromptTemplates.table_refinement(
+                        user_query=user_query,
+                        schema=self.schema,
+                        selected_tables=candidate_tables
+                    )
+
+                    refinement_output = llm_client.with_structured_output(
+                        schema=TableRefinementOutput,
+                        messages=[
+                            {"role": "system", "content": PromptTemplates.system_message()},
+                            {"role": "user", "content": refinement_prompt},
+                        ],
+                        session=session,
+                    )
+
+                    final_tables = refinement_output.final_tables
+                    refinement_reasoning = refinement_output.reasoning
+
+                    # Update table_columns_map to only include final tables
+                    table_columns_map = {
+                        t: table_columns_map.get(t, [])
+                        for t in final_tables
+                        if t in table_columns_map
+                    }
+
+                    if refinement_output.removed_tables:
+                        logger.info(
+                            f"  Removed tables during refinement: {refinement_output.removed_tables}"
+                        )
+
+                    logger.info(f"Phase 2 complete: {len(final_tables)} final table(s): {final_tables}")
+
+                except Exception as e:
+                    logger.error(f"Error in refinement phase: {str(e)}")
+                    logger.warning("Using candidate tables from Phase 1 without refinement")
+                    refinement_reasoning = f"Refinement phase failed: {str(e)}"
+            else:
+                logger.info("Phase 2 skipped: Only one candidate table")
+                refinement_reasoning = "Single table selected, no refinement needed"
+
+            # PHASE 3: Synthesize query requirements
+            logger.info(f"Phase 3: Synthesizing requirements for {len(final_tables)} table(s)")
+            try:
+                synthesis_prompt = PromptTemplates.query_requirements_synthesis(
+                    user_query=user_query,
+                    relevant_tables=final_tables,
+                    table_columns_map=table_columns_map
                 )
 
-            # Apply table selection corrections if present
-            has_table_corrections = False
-            if session and session.corrections:
-                table_corrections = [
-                    c for c in session.corrections
-                    if c.correction_type == CorrectionType.TABLE_SELECTION
-                ]
-                if table_corrections:
-                    valid_tables = self._apply_table_corrections(
-                        valid_tables,
-                        table_corrections
-                    )
-                    has_table_corrections = True
-                    logger.info(
-                        f"Applied {len(table_corrections)} table correction(s), "
-                        f"resulting in {len(valid_tables)} table(s)"
-                    )
+                synthesis_output = llm_client.with_structured_output(
+                    schema=QueryUnderstandingOutput,
+                    messages=[
+                        {"role": "system", "content": PromptTemplates.system_message()},
+                        {"role": "user", "content": synthesis_prompt},
+                    ],
+                    session=session,
+                )
+
+                joins_needed = synthesis_output.joins_needed
+                filters = synthesis_output.filters
+                aggregations = synthesis_output.aggregations
+                ordering = synthesis_output.ordering
+                synthesis_reasoning = synthesis_output.reasoning
+
+            except Exception as e:
+                logger.error(f"Error synthesizing requirements: {str(e)}")
+                # Fallback: basic inference
+                joins_needed = len(final_tables) > 1
+                filters = None
+                aggregations = None
+                ordering = None
+                synthesis_reasoning = f"Synthesis failed, using basic inference: {str(e)}"
+
+            # Build comprehensive reasoning
+            reasoning_parts = [
+                "=== PHASE 1: Table Evaluation ===",
+            ]
+            for detail in table_relevance_details:
+                status = "✓ SELECTED" if detail["is_relevant"] else "✗ REJECTED"
+                reasoning_parts.append(
+                    f"{detail['table']}: {status} "
+                    f"(confidence: {detail['confidence']:.2f}) - {detail['reasoning']}"
+                )
+
+            reasoning_parts.append("\n=== PHASE 2: Refinement ===")
+            reasoning_parts.append(refinement_reasoning)
+
+            reasoning_parts.append("\n=== PHASE 3: Requirements ===")
+            reasoning_parts.append(synthesis_reasoning)
+
+            combined_reasoning = "\n".join(reasoning_parts)
+
+            # Collect all columns
+            all_columns = []
+            for table_name, columns in table_columns_map.items():
+                all_columns.extend([f"{table_name}.{col}" for col in columns])
 
             # Check for table selection ambiguity
             # Only check when: multiple tables + no joins needed + no corrections applied
-            # Trust LLM when it picks a single table (no proactive schema checking)
-            if (len(valid_tables) > 1 and not output.joins_needed
+            if (len(final_tables) > 1 and not joins_needed
                 and not has_table_corrections):
-                # Multiple tables identified but no joins needed = AMBIGUITY
-                # A simple query should only use one table - LLM is confused
                 logger.warning(
-                    f"Table selection ambiguity: {len(valid_tables)} tables identified "
-                    f"{valid_tables} but no joins needed - query should use only one table"
+                    f"Table selection ambiguity: {len(final_tables)} tables identified "
+                    f"{final_tables} but no joins needed - query should use only one table"
                 )
                 raise AmbiguityError(
                     f"Multiple tables identified but query does not require joins. "
                     f"Please specify which single table to use.",
-                    options=[f"{t} - Identified by LLM" for t in valid_tables],
+                    options=[
+                        f"{t} - {next((d['reasoning'] for d in table_relevance_details if d['table'] == t), 'No reason')}"
+                        for t in final_tables
+                    ],
                     context={
                         "user_query": user_query,
-                        "selected_table": valid_tables[0],  # First as default
-                        "similar_tables": valid_tables,
+                        "selected_table": final_tables[0],
+                        "similar_tables": final_tables,
                         "type": "table_selection",
                     },
                 )
 
-            # Convert to dictionary
             understanding = {
-                "tables": valid_tables,
-                "columns": output.columns,
-                "joins_needed": output.joins_needed,
-                "filters": output.filters,
-                "aggregations": output.aggregations,
-                "ordering": output.ordering,
-                "reasoning": output.reasoning,
+                "tables": final_tables,
+                "columns": all_columns,
+                "joins_needed": joins_needed,
+                "filters": filters,
+                "aggregations": aggregations,
+                "ordering": ordering,
+                "reasoning": combined_reasoning,
             }
 
             logger.info(
-                f"Identified {len(understanding['tables'])} table(s): "
+                f"Query understanding complete: {len(understanding['tables'])} table(s): "
                 f"{understanding['tables']}"
             )
 
@@ -152,6 +300,49 @@ class QueryUnderstanding:
                 "ordering": None,
                 "reasoning": f"Error: {str(e)}",
             }
+
+    def _filter_tables_by_corrections(self, session: Optional[Session]) -> tuple[List[str], bool]:
+        """Apply user corrections to determine which tables to evaluate.
+
+        Args:
+            session: Optional session with corrections
+
+        Returns:
+            Tuple of (list of table names to evaluate, whether corrections were applied)
+        """
+        # Start with all tables
+        tables_to_evaluate = list(self.schema.tables.keys())
+        has_corrections = False
+
+        if session and session.corrections:
+            table_corrections = [
+                c for c in session.corrections
+                if c.correction_type == CorrectionType.TABLE_SELECTION
+            ]
+
+            if table_corrections:
+                has_corrections = True
+                selected = []
+                rejected = []
+
+                for correction in table_corrections:
+                    if correction.content.get("selected_table"):
+                        selected.append(correction.content["selected_table"])
+                    if correction.content.get("rejected_tables"):
+                        rejected.extend(correction.content["rejected_tables"])
+
+                if selected:
+                    # Only evaluate selected tables
+                    tables_to_evaluate = [t for t in selected if self.schema.get_table(t)]
+                    logger.info(f"Using corrected tables: {tables_to_evaluate}")
+                elif rejected:
+                    # Exclude rejected tables
+                    tables_to_evaluate = [
+                        t for t in tables_to_evaluate if t not in rejected
+                    ]
+                    logger.info(f"Excluding rejected tables: {rejected}")
+
+        return tables_to_evaluate, has_corrections
 
     def _check_table_ambiguity(self, user_query: str, identified_tables: List[str]) -> None:
         """Check if identified tables have ambiguous alternatives in the schema.

@@ -20,7 +20,6 @@ bigquery:
   dataset: ""  # Set via environment variable BIGQUERY_DATASET
   location: "US"
   query_timeout: 300  # seconds
-  max_bytes_billed: 10737418240  # 10 GB
   credentials_path: ""  # Optional: path to service account JSON
 
 session:
