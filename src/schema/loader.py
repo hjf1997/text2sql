@@ -85,13 +85,11 @@ class SchemaLoader:
         if dataset is None:
             dataset = settings.get("bigquery.dataset")
 
-        # Check cache
+        # Check cache and identify stale files
+        cached_schema = None
+        stale_files = {}
         if use_cache and settings.get("schema.cache_parsed_schema", True):
-            cached_schema = self._load_from_cache(schema_dir)
-            if cached_schema:
-                logger.info("Loaded schema from cache")
-                self._schema = cached_schema
-                return cached_schema
+            cached_schema, stale_files = self._load_from_cache(schema_dir)
 
         # Find all Excel files in directory
         excel_files = list(schema_path.glob("*.xlsx"))
@@ -100,19 +98,40 @@ class SchemaLoader:
         if not excel_files:
             raise SchemaError(f"No Excel files found in directory: {schema_dir}")
 
+        # Determine which files need to be parsed
+        if cached_schema and not stale_files:
+            # Cache is complete and fresh - use it directly
+            logger.info("Using complete fresh cache, no parsing needed")
+            self._schema = cached_schema
+            return cached_schema
+
+        # Need to parse some or all files
         logger.info(f"Loading schema from directory: {schema_dir}")
         logger.info(f"Found {len(excel_files)} Excel files")
 
-        # Create schema object
-        schema = Schema(
-            project_id=project_id,
-            dataset=dataset,
-        )
+        # Start with cached schema or create new one
+        if cached_schema:
+            schema = cached_schema
+            logger.info(f"Using {len(schema.tables)} cached tables as base")
+        else:
+            schema = Schema(
+                project_id=project_id,
+                dataset=dataset,
+            )
+            logger.info("Starting fresh schema (no cache)")
 
-        # Parse each Excel file as a separate table
+        # Track which tables were newly parsed (need firewall check)
+        newly_parsed_tables = []
+
+        # Parse each Excel file (only stale ones if cache exists)
         for excel_file in sorted(excel_files):
             # Skip temporary Excel files (start with ~$)
             if excel_file.name.startswith('~$'):
+                continue
+
+            # Skip non-stale files if using cache
+            if cached_schema and excel_file.name not in stale_files:
+                logger.debug(f"Skipping {excel_file.name} (using cached version)")
                 continue
 
             try:
@@ -125,9 +144,15 @@ class SchemaLoader:
 
                 # Set dataset on table
                 table.dataset = dataset
-                schema.add_table(table)
 
-                logger.info(f"✓ Loaded table '{table.name}' with {len(table.columns)} columns")
+                # Add or update table in schema
+                if table.name in schema.tables:
+                    logger.info(f"✓ Updated table '{table.name}' with {len(table.columns)} columns")
+                else:
+                    logger.info(f"✓ Loaded new table '{table.name}' with {len(table.columns)} columns")
+
+                schema.add_table(table)
+                newly_parsed_tables.append(table.name)
 
             except Exception as e:
                 logger.error(f"Failed to parse {excel_file.name}: {str(e)}")
@@ -136,55 +161,61 @@ class SchemaLoader:
                 ) from e
 
         logger.info(
-            f"Successfully loaded schema with {len(schema.tables)} tables, "
-            f"{len(schema.get_all_columns())} total columns"
+            f"Schema ready: {len(schema.tables)} tables total, "
+            f"{len(newly_parsed_tables)} newly parsed, "
+            f"{len(schema.tables) - len(newly_parsed_tables)} from cache"
         )
 
-        # Run firewall check if requested (with incremental caching)
+        # Run firewall check if requested (only on newly parsed tables)
         if check_firewall:
-            logger.info("\n" + "="*60)
-            logger.info("Starting firewall check for schema descriptions...")
-            logger.info("="*60)
+            if newly_parsed_tables:
+                logger.info("\n" + "="*60)
+                logger.info(f"Starting firewall check for {len(newly_parsed_tables)} newly parsed tables...")
+                logger.info("="*60)
 
-            try:
-                from .firewall_checker import FirewallChecker
-                checker = FirewallChecker()
+                try:
+                    from .firewall_checker import FirewallChecker
+                    checker = FirewallChecker()
 
-                # Check each table and save to cache incrementally
-                for table_idx, (table_name, table) in enumerate(schema.tables.items(), 1):
-                    logger.info(f"\n[{table_idx}/{len(schema.tables)}] Checking table: {table_name}")
+                    # Check only newly parsed tables
+                    for table_idx, table_name in enumerate(newly_parsed_tables, 1):
+                        table = schema.tables[table_name]
+                        logger.info(f"\n[{table_idx}/{len(newly_parsed_tables)}] Checking table: {table_name}")
 
-                    # Check table description
-                    checker.check_table_description(table, skip_checked=True)
+                        # Check table description (skip_checked=False for new tables)
+                        checker.check_table_description(table, skip_checked=False)
 
-                    # Check column descriptions
-                    checker.check_column_descriptions(
-                        table.columns,
-                        table_name,
-                        skip_checked=True
+                        # Check column descriptions (skip_checked=False for new columns)
+                        checker.check_column_descriptions(
+                            table.columns,
+                            table_name,
+                            skip_checked=False
+                        )
+
+                        # Save to cache after each table is checked (incremental save)
+                        if settings.get("schema.cache_parsed_schema", True):
+                            try:
+                                self._save_to_cache(schema_dir, schema)
+                                logger.debug(f"   💾 Saved schema to cache after checking {table_name}")
+                            except Exception as cache_error:
+                                logger.warning(f"Failed to save cache after {table_name}: {cache_error}")
+
+                    logger.info("✓ Firewall check complete")
+                except Exception as e:
+                    logger.error(f"Firewall check failed: {str(e)}")
+                    logger.warning(
+                        "Schema loaded but firewall check incomplete. "
+                        "Descriptions may be blocked when used in prompts."
                     )
-
-                    # Save to cache after each table is checked (incremental save)
+                    # Still save what we have
                     if settings.get("schema.cache_parsed_schema", True):
-                        try:
-                            self._save_to_cache(schema_dir, schema)
-                            logger.debug(f"   💾 Saved schema to cache after checking {table_name}")
-                        except Exception as cache_error:
-                            logger.warning(f"Failed to save cache after {table_name}: {cache_error}")
-
-                logger.info("✓ Firewall check complete")
-            except Exception as e:
-                logger.error(f"Firewall check failed: {str(e)}")
-                logger.warning(
-                    "Schema loaded but firewall check incomplete. "
-                    "Descriptions may be blocked when used in prompts."
-                )
-                # Still save what we have
-                if settings.get("schema.cache_parsed_schema", True):
-                    self._save_to_cache(schema_dir, schema)
+                        self._save_to_cache(schema_dir, schema)
+            else:
+                logger.info("No newly parsed tables - skipping firewall check")
+                logger.info(f"Using {len(schema.tables)} cached tables (already firewall checked)")
         else:
-            # No firewall check - just save to cache
-            if settings.get("schema.cache_parsed_schema", True):
+            # No firewall check - just save to cache if there were changes
+            if newly_parsed_tables and settings.get("schema.cache_parsed_schema", True):
                 self._save_to_cache(schema_dir, schema)
 
         self._schema = schema
@@ -226,36 +257,26 @@ class SchemaLoader:
         cache_name = f"{dir_path.name}_schema.json"
         return self.cache_dir / cache_name
 
-    def _load_from_cache(self, schema_dir: str) -> Optional[Schema]:
-        """Load schema from cache if available and fresh.
+    def _load_from_cache(self, schema_dir: str) -> tuple[Optional[Schema], dict]:
+        """Load schema from cache and identify stale tables.
 
         Args:
             schema_dir: Path to schema directory
 
         Returns:
-            Cached Schema or None if cache miss/stale
+            Tuple of (cached Schema or None, dict mapping Excel filename to mtime for stale files)
         """
         cache_path = self._get_cache_path(schema_dir)
 
         if not cache_path.exists():
-            return None
+            return None, {}
 
         dir_path = Path(schema_dir)
         if not dir_path.exists():
-            return None
+            return None, {}
 
-        # Check if any Excel file is newer than cache
+        # Get cache modification time
         cache_mtime = cache_path.stat().st_mtime
-
-        excel_files = list(dir_path.glob("*.xlsx"))
-        excel_files.extend(dir_path.glob("*.xls"))
-
-        for excel_file in excel_files:
-            if excel_file.name.startswith('~$'):
-                continue
-            if excel_file.stat().st_mtime > cache_mtime:
-                logger.info(f"Cache is stale (newer file: {excel_file.name}), will reload")
-                return None
 
         # Load from cache
         try:
@@ -263,12 +284,38 @@ class SchemaLoader:
                 data = json.load(f)
 
             schema = self._schema_from_dict(data)
-            logger.info(f"Loaded schema from cache: {cache_path}")
-            return schema
+
+            # Identify which Excel files are new or modified
+            excel_files = list(dir_path.glob("*.xlsx"))
+            excel_files.extend(dir_path.glob("*.xls"))
+
+            stale_files = {}
+            for excel_file in excel_files:
+                if excel_file.name.startswith('~$'):
+                    continue
+
+                file_mtime = excel_file.stat().st_mtime
+                # Extract table name from filename (without extension)
+                table_name = excel_file.stem
+
+                # Check if file is newer than cache OR table not in cached schema
+                if file_mtime > cache_mtime or table_name not in schema.tables:
+                    stale_files[excel_file.name] = file_mtime
+                    logger.debug(f"File is stale or new: {excel_file.name}")
+
+            if stale_files:
+                logger.info(
+                    f"Loaded partial cache: {len(schema.tables)} tables cached, "
+                    f"{len(stale_files)} files need reloading"
+                )
+            else:
+                logger.info(f"Loaded complete cache: {len(schema.tables)} tables, all fresh")
+
+            return schema, stale_files
 
         except Exception as e:
             logger.warning(f"Failed to load from cache: {str(e)}")
-            return None
+            return None, {}
 
     def _save_to_cache(self, schema_dir: str, schema: Schema) -> None:
         """Save schema to cache.

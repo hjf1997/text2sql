@@ -104,7 +104,7 @@ class QueryUnderstanding:
                 # A simple query should only use one table - LLM is confused
                 logger.warning(
                     f"Table selection ambiguity: {len(valid_tables)} tables identified "
-                    f"but no joins needed - query should use only one table"
+                    f"{valid_tables} but no joins needed - query should use only one table"
                 )
                 raise AmbiguityError(
                     f"Multiple tables identified but query does not require joins. "
