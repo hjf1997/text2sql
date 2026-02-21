@@ -14,6 +14,7 @@ class LessonType(str, Enum):
     ERROR_PATTERN = "error_pattern"
     QUERY_PATTERN = "query_pattern"
     JOIN_PATTERN = "join_pattern"
+    LLM_GUIDED = "llm_guided"
 
 
 class Lesson(BaseModel):
@@ -190,5 +191,33 @@ class QueryPatternLesson(Lesson):
             "variables": self.variables,
             "when_to_use": self.when_to_use,
             "required_tables": self.required_tables,
+        })
+        return data
+
+
+class LLMGuidedLesson(Lesson):
+    """Natural language instruction for LLM to interpret during query processing.
+
+    Unlike mechanical lessons (prefix/suffix), these are contextual instructions
+    that the LLM interprets naturally during table identification or SQL generation.
+
+    Examples:
+        - "When multiple table versions exist, prefer the most recent (2024)"
+        - "For analytics queries, prefer tables with _Summary suffix"
+        - "Use INNER JOIN for transaction queries to exclude customers without purchases"
+    """
+
+    type: LessonType = LessonType.LLM_GUIDED
+    instruction: str  # Natural language guidance for LLM
+    scope: str = "all"  # "table_identification", "sql_generation", or "all"
+    priority: int = 0  # Higher priority lessons appear first (for ordering)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        data = super().to_dict()
+        data.update({
+            "instruction": self.instruction,
+            "scope": self.scope,
+            "priority": self.priority,
         })
         return data

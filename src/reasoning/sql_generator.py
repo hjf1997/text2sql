@@ -67,7 +67,7 @@ class SQLGenerator:
             # No transformations - identity mapping
             table_name_mapping = {table: table for table in identified_tables}
 
-        # Get relevant lessons for context
+        # Get relevant lessons for context (error patterns, query patterns)
         lessons = []
         if self.apply_memory:
             lessons = lesson_repository.get_relevant_lessons(
@@ -76,7 +76,16 @@ class SQLGenerator:
             )
             logger.info(f"Retrieved {len(lessons)} relevant lessons")
 
-        # Generate SQL prompt with table mapping
+        # Get LLM-guided lessons for SQL generation
+        llm_guided_lessons = []
+        if self.apply_memory:
+            llm_guided_lessons = lesson_repository.get_llm_guided_lessons(
+                scope="sql_generation",
+                identified_tables=identified_tables,
+            )
+            logger.info(f"Retrieved {len(llm_guided_lessons)} LLM-guided SQL generation lessons")
+
+        # Generate SQL prompt with table mapping and lessons
         prompt = PromptTemplates.sql_generation(
             user_query,
             self.schema,
@@ -85,6 +94,7 @@ class SQLGenerator:
             constraints,
             exploration_results,
             lessons=lessons,
+            llm_guided_lessons=llm_guided_lessons,  # Pass LLM-guided lessons
             table_name_mapping=table_name_mapping,  # Pass mapping separately
         )
 
@@ -171,7 +181,7 @@ class SQLGenerator:
             # No transformations - identity mapping
             table_name_mapping = {table: table for table in identified_tables}
 
-        # Get relevant lessons for context
+        # Get relevant lessons for context (error patterns, query patterns)
         lessons = []
         if self.apply_memory:
             lessons = lesson_repository.get_relevant_lessons(
@@ -180,7 +190,16 @@ class SQLGenerator:
             )
             logger.info(f"Retrieved {len(lessons)} relevant lessons for refinement")
 
-        # Generate SQL refinement prompt with error context
+        # Get LLM-guided lessons for SQL generation
+        llm_guided_lessons = []
+        if self.apply_memory:
+            llm_guided_lessons = lesson_repository.get_llm_guided_lessons(
+                scope="sql_generation",
+                identified_tables=identified_tables,
+            )
+            logger.info(f"Retrieved {len(llm_guided_lessons)} LLM-guided SQL generation lessons for refinement")
+
+        # Generate SQL refinement prompt with error context and lessons
         prompt = PromptTemplates.sql_refinement(
             user_query,
             self.schema,
@@ -191,6 +210,7 @@ class SQLGenerator:
             join_conditions,
             constraints,
             lessons=lessons,
+            llm_guided_lessons=llm_guided_lessons,  # Pass LLM-guided lessons
             table_name_mapping=table_name_mapping,  # Pass mapping separately
         )
 

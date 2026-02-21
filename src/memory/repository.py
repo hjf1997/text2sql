@@ -14,6 +14,7 @@ from .models import (
     ColumnMappingLesson,
     ErrorPatternLesson,
     QueryPatternLesson,
+    LLMGuidedLesson,
 )
 from ..config import settings
 from ..utils import setup_logger
@@ -121,6 +122,20 @@ class LessonRepository:
                 )
                 self._manual_lessons.append(lesson)
 
+            # Load LLM-guided lessons
+            for lesson_data in data.get("llm_guided_lessons", []):
+                lesson = LLMGuidedLesson(
+                    id=lesson_data.get("id", str(uuid.uuid4())),
+                    content=lesson_data.get("content", ""),
+                    instruction=lesson_data.get("instruction", ""),
+                    scope=lesson_data.get("scope", "all"),
+                    priority=lesson_data.get("priority", 0),
+                    confidence=lesson_data.get("confidence", 0.9),
+                    source="manual",
+                    applicable_to=lesson_data.get("applicable_to", []),
+                )
+                self._manual_lessons.append(lesson)
+
             logger.info(f"Loaded {len(self._manual_lessons)} manual lessons")
 
         except Exception as e:
@@ -147,6 +162,8 @@ class LessonRepository:
                     lesson = ErrorPatternLesson(**item)
                 elif lesson_type == LessonType.QUERY_PATTERN:
                     lesson = QueryPatternLesson(**item)
+                elif lesson_type == LessonType.LLM_GUIDED:
+                    lesson = LLMGuidedLesson(**item)
                 else:
                     lesson = Lesson(**item)
 
@@ -258,6 +275,43 @@ class LessonRepository:
                 unique_lessons.append(lesson)
 
         return sorted(unique_lessons, key=lambda x: x.confidence, reverse=True)
+
+    def get_llm_guided_lessons(
+        self,
+        scope: Optional[str] = None,
+        identified_tables: Optional[List[str]] = None,
+    ) -> List[LLMGuidedLesson]:
+        """Get LLM-guided lessons for a specific scope.
+
+        Args:
+            scope: Filter by scope ("table_identification", "sql_generation", or "all")
+            identified_tables: Optional tables to filter applicable_to
+
+        Returns:
+            List of LLM-guided lessons, sorted by priority (desc) then confidence (desc)
+        """
+        lessons = [
+            l for l in self.get_all_lessons()
+            if isinstance(l, LLMGuidedLesson)
+        ]
+
+        # Filter by scope
+        if scope:
+            lessons = [
+                l for l in lessons
+                if l.scope == "all" or l.scope == scope
+            ]
+
+        # Filter by applicable tables
+        if identified_tables:
+            lessons = [
+                l for l in lessons
+                if not l.applicable_to or "all" in l.applicable_to
+                or any(table in l.applicable_to for table in identified_tables)
+            ]
+
+        # Sort by priority (desc), then confidence (desc)
+        return sorted(lessons, key=lambda x: (-x.priority, -x.confidence))
 
     def add_lesson(self, lesson: Lesson, save: bool = True):
         """Add a new learned lesson.

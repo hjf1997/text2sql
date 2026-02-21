@@ -510,3 +510,319 @@ class Text2SQLAgent:
             recommendations.append("Check SQL syntax and table/column names")
 
         return recommendations
+
+    def query_with_langgraph(
+        self,
+        user_query: str,
+        execute: bool = True,
+        return_session: bool = False,
+    ) -> Dict[str, Any]:
+        """Process a natural language query using LangGraph orchestration.
+
+        EXPERIMENTAL: This method uses the new LangGraph-based workflow
+        as an alternative to the legacy orchestrator.
+
+        Args:
+            user_query: Natural language query
+            execute: Whether to execute the SQL (if False, only generates SQL)
+            return_session: Whether to return the session object
+
+        Returns:
+            Dictionary containing:
+                - sql: Generated SQL query
+                - results: Query results (if execute=True)
+                - session: Session object (if return_session=True)
+                - success: Boolean indicating success
+                - error: Error message (if failed)
+        """
+        import uuid
+        from ..graph import app
+        from ..graph.components import register_components, unregister_components
+
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Processing query with LangGraph: {user_query}")
+        logger.info(f"{'='*60}")
+
+        # Create session
+        session = session_manager.create_session(user_query)
+        session.schema_snapshot = self.schema.to_dict()
+        session.add_message("user", user_query)
+
+        # Register components for this session
+        session_id = session.session_id
+        register_components(session_id, {
+            "query_understanding": self.query_understanding,
+            "join_inference": self.join_inference,
+            "sql_generator": self.sql_generator,
+            "bigquery_client": bigquery_client,
+            "lesson_learner": self.lesson_learner,
+        })
+
+        try:
+            # Prepare initial state
+            from ..graph.state import Text2SQLState
+
+            initial_state = Text2SQLState(
+                user_query=user_query,
+                session_id=session_id,
+                session=session.to_dict(),
+                execute_sql=execute,
+                max_sql_attempts=settings.get("agent.max_sql_attempts", 3),
+            )
+
+            # Configure LangGraph with checkpointing
+            config = {"configurable": {"thread_id": session_id}}
+
+            # Invoke the graph
+            logger.info("Invoking LangGraph workflow...")
+            result_state = app.invoke(initial_state.model_dump(), config=config)
+
+            # Check for ambiguity (graph interrupt)
+            if result_state.get("ambiguity_options"):
+                logger.warning(f"Ambiguity detected: {result_state.get('error')}")
+
+                # Update session from state
+                session_dict = result_state.get("session", {})
+                if session_dict:
+                    session = Session.from_dict(session_dict)
+                    session_manager.save_session(session)
+
+                return {
+                    "success": False,
+                    "error": "ambiguity",
+                    "message": result_state.get("error", "Ambiguity requires clarification"),
+                    "options": result_state.get("ambiguity_options"),
+                    "session_id": session_id,
+                    "session": session if return_session else None,
+                }
+
+            # Check for errors
+            if result_state.get("error") and not result_state.get("final_sql"):
+                logger.error(f"Query processing failed: {result_state.get('error')}")
+
+                # Update session from state
+                session_dict = result_state.get("session", {})
+                if session_dict:
+                    session = Session.from_dict(session_dict)
+                    session_manager.save_session(session)
+
+                return {
+                    "success": False,
+                    "error": "processing_failed",
+                    "message": result_state.get("error", "Unknown error"),
+                    "session_id": session_id,
+                    "session": session if return_session else None,
+                }
+
+            # Success - extract results
+            final_sql = result_state.get("final_sql")
+            query_results = result_state.get("query_results")
+
+            # Update session from final state
+            session_dict = result_state.get("session", {})
+            if session_dict:
+                session = Session.from_dict(session_dict)
+                session_manager.save_session(session)
+
+            response = {
+                "success": True,
+                "sql": final_sql,
+                "session_id": session_id,
+            }
+
+            if execute and query_results:
+                response["results"] = query_results
+                response["row_count"] = query_results.get("row_count", 0)
+
+            if return_session:
+                response["session"] = session
+
+            logger.info(f"✓ Query completed successfully via LangGraph")
+            return response
+
+        except Exception as e:
+            logger.error(f"LangGraph query processing failed: {str(e)}")
+
+            # Try to update session if possible
+            try:
+                session_manager.save_session(session)
+            except:
+                pass
+
+            return {
+                "success": False,
+                "error": "processing_failed",
+                "message": str(e),
+                "session_id": session_id,
+                "session": session if return_session else None,
+            }
+
+        finally:
+            # Clean up component registry
+            unregister_components(session_id)
+
+    def query_with_correction_langgraph(
+        self,
+        session_id: str,
+        correction: str,
+        execute: bool = True,
+    ) -> Dict[str, Any]:
+        """Resume query processing with user correction using LangGraph.
+
+        EXPERIMENTAL: This method uses LangGraph's graph interrupts
+        to handle human-in-the-loop corrections.
+
+        Args:
+            session_id: Session ID to resume
+            correction: User correction (natural language or structured)
+            execute: Whether to execute the SQL
+
+        Returns:
+            Result dictionary (same format as query_with_langgraph())
+        """
+        from ..graph import app
+        from ..graph.components import register_components, unregister_components
+
+        logger.info(f"Resuming session {session_id} with correction (LangGraph)")
+
+        # Load session
+        try:
+            session = session_manager.load_session(session_id)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": "invalid_session",
+                "message": f"Could not load session: {str(e)}",
+                "session_id": session_id,
+            }
+
+        # Check correction attempts
+        if session.correction_attempt >= self.max_correction_attempts:
+            return {
+                "success": False,
+                "error": "max_corrections",
+                "message": f"Maximum correction attempts ({self.max_correction_attempts}) reached",
+                "session_id": session_id,
+            }
+
+        # Parse and apply correction
+        try:
+            parsed_correction = CorrectionParser.parse(correction)
+            session.add_correction(parsed_correction)
+            session.increment_correction_attempt()
+            logger.info(f"Applied correction: {parsed_correction.to_constraint_string()}")
+        except Exception as e:
+            logger.error(f"Failed to parse correction: {e}")
+            return {
+                "success": False,
+                "error": "invalid_correction",
+                "message": f"Could not parse correction: {str(e)}",
+                "session_id": session_id,
+            }
+
+        # Re-register components for this session
+        register_components(session_id, {
+            "query_understanding": self.query_understanding,
+            "join_inference": self.join_inference,
+            "sql_generator": self.sql_generator,
+            "bigquery_client": bigquery_client,
+            "lesson_learner": self.lesson_learner,
+        })
+
+        try:
+            # Get current state from checkpoint
+            config = {"configurable": {"thread_id": session_id}}
+            current_state = app.get_state(config)
+
+            if not current_state or not current_state.values:
+                logger.error("Could not retrieve checkpointed state")
+                return {
+                    "success": False,
+                    "error": "no_checkpoint",
+                    "message": "Could not find saved state for this session",
+                    "session_id": session_id,
+                }
+
+            # Update state with correction and updated session
+            updated_values = dict(current_state.values)
+            updated_values["corrections"].append(parsed_correction.to_dict())
+            updated_values["hard_constraints"].append(parsed_correction.to_constraint_string())
+            updated_values["error"] = None  # Clear error to allow continuation
+            updated_values["ambiguity_options"] = None
+            updated_values["session"] = session.to_dict()
+
+            # Update state and resume execution
+            app.update_state(config, updated_values)
+            logger.info("Resuming graph execution after correction...")
+            result_state = app.invoke(None, config=config)
+
+            # Check for continued ambiguity
+            if result_state.get("ambiguity_options"):
+                logger.warning("Still ambiguous after correction")
+                session_dict = result_state.get("session", {})
+                if session_dict:
+                    session = Session.from_dict(session_dict)
+                    session_manager.save_session(session)
+
+                return {
+                    "success": False,
+                    "error": "ambiguity",
+                    "message": result_state.get("error", "Still requires clarification"),
+                    "options": result_state.get("ambiguity_options"),
+                    "session_id": session_id,
+                }
+
+            # Check for errors
+            if result_state.get("error") and not result_state.get("final_sql"):
+                logger.error(f"Query failed after correction: {result_state.get('error')}")
+                session_dict = result_state.get("session", {})
+                if session_dict:
+                    session = Session.from_dict(session_dict)
+                    session_manager.save_session(session)
+
+                return {
+                    "success": False,
+                    "error": "processing_failed",
+                    "message": result_state.get("error"),
+                    "session_id": session_id,
+                }
+
+            # Success!
+            final_sql = result_state.get("final_sql")
+            query_results = result_state.get("query_results")
+
+            session_dict = result_state.get("session", {})
+            if session_dict:
+                session = Session.from_dict(session_dict)
+                session_manager.save_session(session)
+
+            response = {
+                "success": True,
+                "sql": final_sql,
+                "session_id": session_id,
+            }
+
+            if execute and query_results:
+                response["results"] = query_results
+                response["row_count"] = query_results.get("row_count", 0)
+
+            logger.info("✓ Query completed successfully after correction")
+            return response
+
+        except Exception as e:
+            logger.error(f"Failed to resume with correction: {str(e)}")
+            try:
+                session_manager.save_session(session)
+            except:
+                pass
+
+            return {
+                "success": False,
+                "error": "processing_failed",
+                "message": str(e),
+                "session_id": session_id,
+            }
+
+        finally:
+            # Clean up component registry
+            unregister_components(session_id)

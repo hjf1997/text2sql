@@ -1,0 +1,161 @@
+# Manually Configured Lessons
+# These are high-confidence patterns that have been validated
+
+table_mappings:
+  # Example: Production tables require PROD_ prefix
+  - id: "table-prefix-prod-001"
+    content: "All production tables require 'PROD_' prefix"
+    pattern: ".*"  # Applies to all tables
+    prefix: "PROD_"
+    transformation_rule: "Prepend 'PROD_' to all table names"
+    confidence: 0.95
+    applicable_to: ["all"]
+
+  # Example: Specific table mapping
+  # - id: "table-customers-001"
+  #   content: "Customers table maps to PROD_Customers in BigQuery"
+  #   schema_name: "Customers"
+  #   actual_name: "PROD_Customers"
+  #   prefix: "PROD_"
+  #   confidence: 1.0
+  #   applicable_to: ["Customers"]
+
+column_mappings:
+  # Example: customer_id mapping
+  # - id: "col-customer-id-001"
+  #   content: "In Customers table, customer_id column is named cust_id in database"
+  #   table_name: "Customers"
+  #   schema_column: "customer_id"
+  #   actual_column: "cust_id"
+  #   data_type: "INTEGER"
+  #   confidence: 0.95
+
+error_patterns:
+  # Example: Table not found error
+  - id: "error-table-not-found-001"
+    content: "When table is not found, try adding PROD_ prefix"
+    error_type: "table_not_found"
+    error_pattern: "Table .* not found"
+    suggested_fix: "Add 'PROD_' prefix to table name"
+    confidence: 0.90
+    examples:
+      - query: "SELECT * FROM Customers"
+        error: "Table `project.dataset.Customers` not found"
+        fix: "SELECT * FROM PROD_Customers"
+        result: "success"
+
+query_patterns:
+  # Example: Customer orders join pattern
+  # - id: "pattern-customer-orders-001"
+  #   content: "Standard pattern for joining customers with their orders"
+  #   query_type: "customer_orders_join"
+  #   sql_template: |
+  #     SELECT
+  #       c.customer_id,
+  #       c.customer_name,
+  #       COUNT(o.order_id) as order_count,
+  #       SUM(o.total) as total_revenue
+  #     FROM PROD_Customers c
+  #     LEFT JOIN PROD_Orders o ON c.customer_id = o.customer_id
+  #     GROUP BY c.customer_id, c.customer_name
+  #   when_to_use: "When user asks for customer order statistics"
+  #   required_tables: ["Customers", "Orders"]
+  #   confidence: 0.85
+
+llm_guided_lessons:
+  # Example 1: Version preference
+  - id: "llm-guided-001"
+    content: "Prefer 2024 tables when multiple versions exist"
+    instruction: "When multiple table versions are available (e.g., Customer_2023, Customer_2024), always prefer the most recent version (2024) unless explicitly specified otherwise"
+    scope: "table_identification"
+    priority: 10
+    confidence: 0.95
+    applicable_to: ["all"]
+
+  # Example 2: Production vs Staging
+  - id: "llm-guided-002"
+    content: "Prefer production tables over staging"
+    instruction: "When both production and staging tables exist (e.g., PROD_Orders vs STG_Orders), prefer production tables unless user explicitly asks for test or staging data"
+    scope: "table_identification"
+    priority: 8
+    confidence: 0.90
+    applicable_to: ["all"]
+
+  # Example 3: Summary tables for analytics
+  - id: "llm-guided-003"
+    content: "Use summary tables for analytics queries"
+    instruction: "For queries asking for summaries, totals, or aggregated analytics, prefer tables with _Summary or _Aggregated suffixes as they contain pre-computed results"
+    scope: "table_identification"
+    priority: 5
+    confidence: 0.85
+    applicable_to: ["all"]
+
+  # SQL Generation Lessons (scope="sql_generation")
+
+  # Example 4: Join type preference
+  - id: "llm-guided-sql-001"
+    content: "Use INNER JOIN for transaction tables"
+    instruction: "When joining transaction tables (Orders, Payments, Invoices), always use INNER JOIN instead of LEFT JOIN to exclude orphaned records and ensure data integrity"
+    scope: "sql_generation"
+    priority: 10
+    confidence: 0.95
+    applicable_to: ["Orders", "Payments", "Invoices"]
+
+  # Example 5: Date filtering with functions
+  - id: "llm-guided-sql-002"
+    content: "Use CURRENT_DATE() for 'today' queries"
+    instruction: "When user asks for 'today', 'current', or 'latest' data, use CURRENT_DATE() function instead of hardcoded dates. For 'this month', use DATE_TRUNC(CURRENT_DATE(), MONTH)"
+    scope: "sql_generation"
+    priority: 8
+    confidence: 0.90
+    applicable_to: ["all"]
+
+  # Example 6: NULL handling in aggregations
+  - id: "llm-guided-sql-003"
+    content: "Handle NULLs in aggregations"
+    instruction: "When calculating totals or averages, use COALESCE(column, 0) to treat NULL values as 0. Example: SUM(COALESCE(revenue, 0)) instead of SUM(revenue)"
+    scope: "sql_generation"
+    priority: 7
+    confidence: 0.85
+    applicable_to: ["all"]
+
+  # Example 7: Column aliasing
+  - id: "llm-guided-sql-004"
+    content: "Use business-friendly column aliases"
+    instruction: "Always add meaningful aliases to calculated columns and aggregations using snake_case. Example: 'AS total_revenue' instead of 'AS col1' or no alias"
+    scope: "sql_generation"
+    priority: 5
+    confidence: 0.90
+    applicable_to: ["all"]
+
+  # Example 8: Ordering preference
+  - id: "llm-guided-sql-005"
+    content: "Sort by most recent date first"
+    instruction: "For queries involving dates or timestamps, default to ORDER BY date_column DESC (most recent first) unless user explicitly asks for oldest first"
+    scope: "sql_generation"
+    priority: 6
+    confidence: 0.85
+    applicable_to: ["all"]
+
+  # Example 9: Performance - limit large tables
+  - id: "llm-guided-sql-006"
+    content: "Limit results for exploratory queries"
+    instruction: "For exploratory queries without explicit limits on large tables (>1M rows), add LIMIT 1000 to prevent expensive full scans. User can request more if needed"
+    scope: "sql_generation"
+    priority: 4
+    confidence: 0.80
+    applicable_to: ["Orders", "Transactions", "Events"]
+
+# Notes for llm_guided_lessons:
+# - instruction: Natural language guidance for the LLM (what to do)
+# - scope: Where to apply ("table_identification", "sql_generation", or "all")
+# - priority: Higher numbers appear first (0-100 range recommended)
+# - confidence: How confident we are in this lesson (0.0-1.0)
+# - applicable_to: Which tables this applies to (["all"] for global rules)
+
+# Notes:
+# - This file contains manually validated patterns
+# - Auto-learned patterns are stored in memory/learned_lessons.json
+# - Confidence ranges from 0.0 to 1.0
+# - Higher confidence patterns are applied first
+# - Patterns can be disabled by commenting them out

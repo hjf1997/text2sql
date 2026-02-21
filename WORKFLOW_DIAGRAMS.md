@@ -14,11 +14,12 @@ flowchart TD
     Init --> LoadSchema[State: SCHEMA_LOADING<br/>Load schema from Excel files]
     LoadSchema --> QueryUnderstand[State: QUERY_UNDERSTANDING]
 
-    QueryUnderstand --> FilterCorrections[Filter tables by corrections<br/>if user provided any]
+    QueryUnderstand --> RetrieveLessons[Retrieve LLM-guided lessons<br/>scope=table_identification]
+    RetrieveLessons --> FilterCorrections[Filter tables by corrections<br/>if user provided any]
     FilterCorrections --> Phase1Start[Phase 1: ITERATIVE TABLE EVALUATION]
 
     Phase1Start --> LoopTables[Loop through each table]
-    LoopTables --> EvalTable[Evaluate single table with LLM<br/>TableRelevanceOutput:<br/>- is_relevant<br/>- confidence<br/>- relevant_columns<br/>- reasoning]
+    LoopTables --> EvalTable[Evaluate single table with LLM<br/>WITH lessons as guidelines<br/>TableRelevanceOutput:<br/>- is_relevant<br/>- confidence<br/>- relevant_columns<br/>- reasoning]
 
     EvalTable --> CollectCandidate{Is relevant?}
     CollectCandidate -->|Yes| AddCandidate[Add to candidate list<br/>with columns]
@@ -82,6 +83,7 @@ flowchart TD
     style RaiseJoinAmbig fill:#fff4e1
     style ApplyMemory fill:#e1f0ff
     style Learn fill:#e1f0ff
+    style RetrieveLessons fill:#e1f0ff
     style Phase1Start fill:#fff4e1
     style EvalTable fill:#fff4e1
     style Phase2 fill:#fff4e1
@@ -146,14 +148,23 @@ flowchart TD
     end
 
     subgraph Loading["Lesson Loading"]
-        Manual --> LoadManual[Load at startup:<br/>- Table mappings<br/>- Column mappings<br/>- Error patterns<br/>- Query patterns]
-        Learned --> LoadLearned[Load at startup:<br/>Auto-learned lessons]
+        Manual --> LoadManual[Load at startup:<br/>- Table mappings<br/>- Column mappings<br/>- Error patterns<br/>- Query patterns<br/>- LLM-guided lessons ✨NEW]
+        Learned --> LoadLearned[Load at startup:<br/>Auto-learned lessons<br/>including LLM-guided]
         LoadManual --> Repo[Lesson Repository<br/>In-memory cache]
         LoadLearned --> Repo
     end
 
     subgraph Application["Lesson Application"]
-        SQLGenStart[SQL Generation Starts] --> CheckMemory{apply_memory<br/>enabled?}
+        QUStart[Query Understanding Starts] --> CheckQUMemory{apply_memory<br/>enabled?}
+        CheckQUMemory -->|Yes| GetLLMGuided[Get LLM-guided lessons<br/>scope=table_identification<br/>priority-sorted]
+        GetLLMGuided --> FormatGuidelines[Format as<br/>Query Understanding Guidelines]
+        FormatGuidelines --> AddToQUPrompt[Add to Phase 1 prompts<br/>LLM interprets contextually]
+        CheckQUMemory -->|No| SkipLessons
+        AddToQUPrompt --> QUProcess[Query Understanding<br/>with lesson guidelines]
+        SkipLessons --> QUProcess
+
+        QUProcess --> SQLGenStart[SQL Generation Starts]
+        SQLGenStart --> CheckMemory{apply_memory<br/>enabled?}
         CheckMemory -->|Yes| GetMapping[TableMapper.transform_multiple<br/>Get table name mappings]
         GetMapping --> ApplyTransform[Apply transformations:<br/>schema_name → actual_name]
         ApplyTransform --> GetRelevant[Get relevant lessons<br/>for context]
@@ -192,16 +203,19 @@ flowchart TD
     style CreateLesson fill:#e1f5e1
     style SaveLesson fill:#e1f5e1
     style ApplyTransform fill:#fff4e1
+    style GetLLMGuided fill:#e1f0ff
+    style FormatGuidelines fill:#fff4e1
+    style AddToQUPrompt fill:#fff4e1
 ```
 
 ### Lesson Types:
 
-1. **Table Mapping Lessons**
+1. **Table Mapping Lessons** (Mechanical)
    - Maps schema names to actual database names
    - Example: `Customers` → `PROD_Customers`
-   - Applied automatically during SQL generation
+   - Applied automatically during SQL generation via transformations
 
-2. **Column Mapping Lessons**
+2. **Column Mapping Lessons** (Mechanical)
    - Maps user terms to actual columns
    - Example: "region" → `Customers.geographic_area`
 
@@ -212,6 +226,15 @@ flowchart TD
 4. **Query Pattern Lessons**
    - Successful query templates
    - Example: Date filtering patterns
+
+5. **LLM-Guided Lessons** ✨NEW (Contextual)
+   - Natural language instructions for LLM to interpret
+   - Example: "When multiple table versions exist, prefer the most recent (2024)"
+   - Example: "For analytics queries, prefer tables with _Summary suffix"
+   - Applied during Query Understanding and SQL Generation
+   - **Key difference**: LLM interprets contextually vs. mechanical transformations
+   - **Scope**: Can target specific phases (table_identification, sql_generation, or all)
+   - **Priority**: Explicit ordering (higher = first)
 
 ### Learning Triggers:
 

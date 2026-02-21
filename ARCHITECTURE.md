@@ -524,12 +524,40 @@ class QueryPatternLesson(Lesson):
     query_type: str
     sql_template: str
     required_tables: List[str]
+
+# LLM-guided lessons (Contextual) ✨NEW
+class LLMGuidedLesson(Lesson):
+    instruction: str              # Natural language guidance for LLM
+    scope: str = "all"           # "table_identification", "sql_generation", or "all"
+    priority: int = 0            # Higher priority = applied first
 ```
 
 **Key Features**:
 - Adaptive confidence scoring (increases with success, decreases with failure)
 - Usage statistics tracking
 - Pydantic validation for data integrity
+
+**Lesson Categories**:
+
+**Mechanical Lessons** (Applied via transformations):
+- `TableMappingLesson`: Direct table name transformations (e.g., `Customers` → `PROD_Customers`)
+- `ColumnMappingLesson`: Column name mappings (e.g., `customer_id` → `cust_id`)
+- Applied automatically by `TableMapper` before SQL generation
+- Fast, deterministic, no LLM interpretation needed
+
+**Contextual Lessons** (Applied via LLM interpretation) ✨NEW:
+- `LLMGuidedLesson`: Natural language instructions for LLM
+- Examples:
+  - "When multiple table versions exist, prefer the most recent (2024)"
+  - "For analytics queries, prefer tables with _Summary suffix"
+  - "Use production tables over staging unless explicitly requested"
+- LLM interprets and applies contextually during query understanding or SQL generation
+- Flexible, handles complex business rules that can't be expressed as simple transformations
+
+**Pattern Lessons** (Provide context):
+- `ErrorPatternLesson`: Common errors and suggested fixes
+- `QueryPatternLesson`: Successful query templates
+- Included in LLM prompts as context, not directly applied
 
 ##### 2. Lesson Repository (`repository.py`)
 
@@ -553,6 +581,13 @@ class LessonRepository:
         context: Optional[str] = None
     ) -> List[Lesson]:
         """Get lessons relevant to current query."""
+
+    def get_llm_guided_lessons(
+        self, scope: Optional[str] = None,
+        identified_tables: Optional[List[str]] = None
+    ) -> List[LLMGuidedLesson]:
+        """Get LLM-guided lessons for a specific scope.
+        Sorted by priority (desc) then confidence (desc)."""
 
     def add_lesson(self, lesson: Lesson, save: bool = True):
         """Add new lesson to repository."""
@@ -671,7 +706,13 @@ The memory system integrates seamlessly into the existing workflow:
 ```
 User Query
     ↓
-QueryUnderstanding (LLM identifies tables)
+┌─────────────────────────────────────────┐
+│ QueryUnderstanding                       │
+│ - Retrieve LLM-guided lessons           │  ← Memory Applied (NEW)
+│   (scope=table_identification)          │
+│ - LLM evaluates tables WITH guidelines   │
+│ - Identifies tables contextually         │
+└─────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────┐
 │ TableMapper.transform_multiple()         │  ← Memory Applied
@@ -697,16 +738,37 @@ Validation & Execution
 Results
 ```
 
+**In Query Understanding** (`query_understanding.py`) ✨NEW:
+
+```python
+def analyze(self, user_query, session=None):
+    # Retrieve LLM-guided lessons
+    llm_guided_lessons = []
+    if self.apply_memory:
+        llm_guided_lessons = lesson_repository.get_llm_guided_lessons(
+            scope="table_identification"
+        )
+        logger.info(f"Retrieved {len(llm_guided_lessons)} LLM-guided lessons")
+
+    # Pass lessons to Phase 1 evaluation
+    prompt = PromptTemplates.table_relevance_evaluation(
+        user_query=user_query,
+        table=table,
+        already_selected_tables=candidate_tables,
+        lessons=llm_guided_lessons  # LLM interprets these as guidelines
+    )
+```
+
 **In SQL Generator** (`sql_generator.py`):
 
 ```python
 def generate(self, user_query, identified_tables, ...):
-    # Apply table transformations
+    # Apply table transformations (mechanical lessons)
     if self.apply_memory and self.table_mapper:
         transformations = self.table_mapper.transform_multiple(identified_tables)
         transformed_tables = list(transformations.values())
 
-    # Get relevant lessons
+    # Get relevant lessons (error patterns, query patterns)
     lessons = lesson_repository.get_relevant_lessons(
         user_query=user_query,
         identified_tables=identified_tables
@@ -1282,8 +1344,18 @@ Table Mapper         Prompt Context
 2. **User Corrections**: "Use PROD_ prefix" → Extract pattern → Apply to future queries
 3. **Pattern Reinforcement**: Successful uses increase confidence, failures decrease it
 
+**Lesson Types**:
+1. **Mechanical Lessons** (Auto-transformations):
+   - Table/Column mappings: Applied automatically by TableMapper
+   - Example: `Customers` → `PROD_Customers`
+2. **Contextual Lessons** ✨NEW (LLM-guided):
+   - Natural language instructions for LLM
+   - Example: "Prefer 2024 tables when multiple versions exist"
+   - LLM interprets during query understanding or SQL generation
+
 **Integration**:
-- **SQL Generation**: Applies table transformations and includes lessons in LLM prompts
+- **Query Understanding** ✨NEW: Retrieves LLM-guided lessons, LLM interprets as guidelines
+- **SQL Generation**: Applies mechanical transformations and includes lessons in LLM prompts
 - **Post-Query**: Automatically extracts lessons after each session
 - **Repository**: Manages both manual (YAML) and learned (JSON) lessons
 

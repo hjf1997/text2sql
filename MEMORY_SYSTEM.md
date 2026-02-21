@@ -54,17 +54,17 @@ The **Cross-Session Memory System** enables the Text-to-SQL Agent to learn from 
 
 ### 1. Lesson Models (`src/memory/models.py`)
 
-Four types of lessons:
+Five types of lessons:
 
 ```python
-# Table name transformations
+# Table name transformations (Mechanical)
 TableMappingLesson:
     schema_name: "Customers"
     actual_name: "PROD_Customers"
     prefix: "PROD_"
     confidence: 0.95
 
-# Column name mappings
+# Column name mappings (Mechanical)
 ColumnMappingLesson:
     table_name: "Customers"
     schema_column: "customer_id"
@@ -82,7 +82,34 @@ QueryPatternLesson:
     query_type: "customer_orders_join"
     sql_template: "SELECT ... FROM PROD_Customers ..."
     confidence: 0.85
+
+# LLM-guided lessons (Contextual) ✨NEW
+LLMGuidedLesson:
+    instruction: "When multiple table versions exist, prefer the most recent (2024)"
+    scope: "table_identification"  # or "sql_generation" or "all"
+    priority: 10  # Higher priority = applied first
+    confidence: 0.95
 ```
+
+### Key Difference: Mechanical vs. Contextual Lessons
+
+**Mechanical Lessons** (Table/Column Mappings):
+- Applied automatically via direct transformations
+- Example: `Customers` → `PROD_Customers` (string replacement)
+- No LLM interpretation needed
+- Fast and deterministic
+
+**Contextual Lessons** (LLM-Guided) ✨NEW:
+- Natural language instructions for LLM to interpret
+- Example: "Prefer 2024 tables when multiple versions exist"
+- LLM decides when and how to apply based on context
+- Flexible, handles complex scenarios
+
+**When to use LLM-Guided Lessons**:
+- Rules that require understanding context (e.g., "prefer recent versions")
+- Business logic that can't be expressed as simple transformations
+- Disambiguation rules (e.g., "use production over staging")
+- Conditional logic (e.g., "use summary tables for analytics queries")
 
 ### 2. Lesson Repository (`src/memory/repository.py`)
 
@@ -101,6 +128,11 @@ lessons = lesson_repository.get_table_mapping_lessons("Customers")
 relevant = lesson_repository.get_relevant_lessons(
     user_query="Show customers",
     identified_tables=["Customers"]
+)
+
+# Get LLM-guided lessons (NEW)
+llm_lessons = lesson_repository.get_llm_guided_lessons(
+    scope="table_identification"  # or "sql_generation" or "all"
 )
 
 # Add new lesson
@@ -178,6 +210,34 @@ error_patterns:
     error_pattern: "Table .* not found"
     suggested_fix: "Add 'PROD_' prefix"
     confidence: 0.90
+
+llm_guided_lessons:
+  # Version preference
+  - id: "llm-guided-001"
+    content: "Prefer 2024 tables when multiple versions exist"
+    instruction: "When multiple table versions are available (e.g., Customer_2023, Customer_2024), always prefer the most recent version (2024) unless explicitly specified otherwise"
+    scope: "table_identification"
+    priority: 10
+    confidence: 0.95
+    applicable_to: ["all"]
+
+  # Production vs Staging
+  - id: "llm-guided-002"
+    content: "Prefer production tables over staging"
+    instruction: "When both production and staging tables exist (e.g., PROD_Orders vs STG_Orders), prefer production tables unless user explicitly asks for test or staging data"
+    scope: "table_identification"
+    priority: 8
+    confidence: 0.90
+    applicable_to: ["all"]
+
+  # Summary tables for analytics
+  - id: "llm-guided-003"
+    content: "Use summary tables for analytics queries"
+    instruction: "For queries asking for summaries, totals, or aggregated analytics, prefer tables with _Summary or _Aggregated suffixes as they contain pre-computed results"
+    scope: "table_identification"
+    priority: 5
+    confidence: 0.85
+    applicable_to: ["all"]
 ```
 
 ### Auto-Learned Lessons (`memory/learned_lessons.json`)
@@ -216,24 +276,58 @@ agent = Text2SQLAgent()
 result = agent.query("Show me top customers")
 
 # Behind the scenes:
-# 1. Identifies tables: ["Customers"]
-# 2. Applies transformations: Customers → PROD_Customers
-# 3. Retrieves relevant lessons for LLM context
-# 4. Generates SQL with PROD_Customers
-# 5. After success, learns new patterns
+# 1. Query Understanding retrieves LLM-guided lessons (scope=table_identification)
+# 2. LLM evaluates tables WITH lesson guidelines (e.g., "prefer 2024 versions")
+# 3. Identifies tables: ["Customers"]
+# 4. Applies mechanical transformations: Customers → PROD_Customers
+# 5. Retrieves relevant lessons for SQL generation context
+# 6. Generates SQL with PROD_Customers
+# 7. After success, learns new patterns
 ```
 
-### 2. SQL Generator Integration
+### 2. Query Understanding Integration (✨NEW)
+
+```python
+# In Query Understanding (automatic)
+def __init__(self, schema: Schema, apply_memory: bool = True):
+    self.schema = schema
+    self.apply_memory = apply_memory
+
+def analyze(self, user_query: str, session: Optional[Session] = None):
+    # Retrieve LLM-guided lessons for table identification
+    llm_guided_lessons = []
+    if self.apply_memory:
+        llm_guided_lessons = lesson_repository.get_llm_guided_lessons(
+            scope="table_identification"
+        )
+        logger.info(f"Retrieved {len(llm_guided_lessons)} LLM-guided lessons")
+
+    # Pass lessons to Phase 1 prompt
+    prompt = PromptTemplates.table_relevance_evaluation(
+        user_query=user_query,
+        table=table,
+        already_selected_tables=candidate_tables,
+        lessons=llm_guided_lessons  # LLM interprets these as guidelines
+    )
+```
+
+**How It Works**:
+1. Component retrieves lessons internally (no orchestrator changes)
+2. Lessons formatted as "Query Understanding Guidelines" in prompt
+3. LLM interprets lessons contextually during table evaluation
+4. Example: "When multiple table versions exist, prefer 2024" → LLM chooses Customer_2024 over Customer_2023
+
+### 3. SQL Generator Integration
 
 ```python
 # In SQL Generator (automatic)
 def generate(self, user_query, identified_tables, ...):
-    # Apply table transformations
+    # Apply table transformations (mechanical lessons)
     if self.apply_memory:
         transformations = self.table_mapper.transform_multiple(identified_tables)
         transformed_tables = list(transformations.values())
 
-        # Get relevant lessons
+        # Get relevant lessons (error patterns, query patterns, etc.)
         lessons = lesson_repository.get_relevant_lessons(
             user_query=user_query,
             identified_tables=identified_tables
@@ -247,7 +341,7 @@ def generate(self, user_query, identified_tables, ...):
         )
 ```
 
-### 3. Post-Query Learning
+### 4. Post-Query Learning
 
 ```python
 # In Text2SQLAgent (automatic)
@@ -260,6 +354,10 @@ def query(self, user_query, ...):
         if lessons_learned:
             logger.info(f"Learned {len(lessons_learned)} new patterns")
 ```
+
+**Learning Types**:
+- **Mechanical lessons** (Table/Column mappings): Extracted from error recovery and corrections
+- **LLM-guided lessons**: Can be added manually in YAML or learned from user patterns (future enhancement)
 
 ## Learning Examples
 

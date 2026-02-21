@@ -38,7 +38,8 @@ TASK:
     def table_relevance_evaluation(
         user_query: str,
         table,
-        already_selected_tables: Optional[List[str]] = None
+        already_selected_tables: Optional[List[str]] = None,
+        lessons: Optional[List] = None
     ) -> str:
         """Generate prompt for evaluating single table relevance (Phase 1).
 
@@ -46,6 +47,7 @@ TASK:
             user_query: The user's natural language query
             table: Single Table object to evaluate
             already_selected_tables: Tables already identified as relevant (for context)
+            lessons: Optional LLM-guided lessons to apply
 
         Returns:
             Formatted prompt
@@ -60,11 +62,23 @@ NOTE: The table you're evaluating below is DIFFERENT from these already-selected
 Consider whether this NEW table adds value beyond what's already selected.
 """
 
+        # Format lessons
+        lessons_str = ""
+        if lessons:
+            lessons_str = "\n## IMPORTANT: Query Understanding Guidelines\n\n"
+            lessons_str += "Follow these guidelines when evaluating table relevance:\n\n"
+
+            for lesson in lessons:
+                if hasattr(lesson, 'instruction'):
+                    lessons_str += f"- {lesson.instruction} (confidence: {lesson.confidence:.0%})\n"
+
+            lessons_str += "\n"
+
         return f"""You are a database query analyzer. Evaluate whether the following table is relevant for answering the user's query.
 
 USER QUERY:
 {user_query}
-{context_str}
+{lessons_str}{context_str}
 TABLE TO EVALUATE:
 {table.to_schema_string()}
 
@@ -73,6 +87,7 @@ TASK:
 2. If relevant, identify which specific columns from this table are needed
 3. Assign a confidence score (0.0 to 1.0) to your decision
 4. Explain your reasoning
+5. IMPORTANT: Apply the guidelines from "Query Understanding Guidelines" section if present
 
 GUIDELINES:
 - A table is relevant if it contains data directly needed to answer the query
@@ -244,6 +259,7 @@ If no valid join can be inferred, set found_joins to false and explain why in th
         constraints: Optional[List[str]] = None,
         exploration_results: Optional[dict] = None,
         lessons: Optional[List] = None,
+        llm_guided_lessons: Optional[List] = None,
         table_name_mapping: Optional[Dict[str, str]] = None,
     ) -> str:
         """Generate prompt for SQL query generation.
@@ -256,6 +272,7 @@ If no valid join can be inferred, set found_joins to false and explain why in th
             constraints: Optional constraint strings from corrections
             exploration_results: Optional results from exploration queries
             lessons: Optional lessons learned from past queries
+            llm_guided_lessons: Optional LLM-guided lessons for SQL generation
             table_name_mapping: Optional mapping from schema names to actual DB table names
 
         Returns:
@@ -331,11 +348,21 @@ YOU MUST follow these constraints exactly in your SQL query.
                     lessons_str += f"- {lesson.content}: {lesson.suggested_fix}\n"
                 lessons_str += "\n"
 
+        # Format LLM-guided lessons for SQL generation
+        llm_guided_str = ""
+        if llm_guided_lessons:
+            llm_guided_str = "\n## IMPORTANT: SQL Generation Guidelines\n\n"
+            llm_guided_str += "Follow these guidelines when generating SQL:\n\n"
+            for lesson in llm_guided_lessons:
+                if hasattr(lesson, 'instruction'):
+                    llm_guided_str += f"- {lesson.instruction} (confidence: {lesson.confidence:.0%})\n"
+            llm_guided_str += "\n"
+
         return f"""You are an expert SQL query generator for BigQuery. Generate a SQL query to answer the user's question.
 
 USER QUERY:
 {user_query}
-{lessons_str}
+{lessons_str}{llm_guided_str}
 RELEVANT SCHEMA:
 {schema_str}
 {joins_str}
@@ -347,7 +374,8 @@ REQUIREMENTS:
 2. Use proper table references (dataset.table if needed)
 3. Include necessary joins, filters, and aggregations
 4. Optimize for performance
-5. IMPORTANT: Apply the learned patterns from "Lessons Learned" section above
+5. IMPORTANT: Apply the learned patterns from "Lessons Learned" section if present
+6. IMPORTANT: Follow the guidelines from "SQL Generation Guidelines" section if present
 
 Provide the SQL query along with an explanation of how it answers the user's question.
 """
@@ -363,6 +391,7 @@ Provide the SQL query along with an explanation of how it answers the user's que
         join_conditions: Optional[List[JoinCandidate]] = None,
         constraints: Optional[List[str]] = None,
         lessons: Optional[List] = None,
+        llm_guided_lessons: Optional[List] = None,
         table_name_mapping: Optional[Dict[str, str]] = None,
     ) -> str:
         """Generate prompt for refining SQL after execution error.
@@ -377,6 +406,7 @@ Provide the SQL query along with an explanation of how it answers the user's que
             join_conditions: Optional join conditions
             constraints: Optional constraint strings from corrections
             lessons: Optional lessons learned from past queries
+            llm_guided_lessons: Optional LLM-guided lessons for SQL generation
             table_name_mapping: Optional mapping from schema names to actual DB table names
 
         Returns:
@@ -445,6 +475,16 @@ YOU MUST follow these constraints exactly.
                     lessons_str += f"- {lesson.content}: {lesson.suggested_fix}\n"
                 lessons_str += "\n"
 
+        # Format LLM-guided lessons for SQL generation
+        llm_guided_str = ""
+        if llm_guided_lessons:
+            llm_guided_str = "\n## IMPORTANT: SQL Generation Guidelines\n\n"
+            llm_guided_str += "Follow these guidelines when generating the corrected SQL:\n\n"
+            for lesson in llm_guided_lessons:
+                if hasattr(lesson, 'instruction'):
+                    llm_guided_str += f"- {lesson.instruction} (confidence: {lesson.confidence:.0%})\n"
+            llm_guided_str += "\n"
+
         return f"""You are an expert SQL query generator for BigQuery. The previous SQL query failed with an error. Analyze the error and generate a CORRECTED SQL query.
 
 USER QUERY:
@@ -459,7 +499,7 @@ PREVIOUS SQL (FAILED):
 
 ERROR MESSAGE:
 {error_message}
-{lessons_str}
+{lessons_str}{llm_guided_str}
 RELEVANT SCHEMA:
 {schema_str}
 {joins_str}
@@ -482,6 +522,7 @@ REQUIREMENTS:
 2. Fix the specific error mentioned above
 3. Maintain the original intent of the user query
 4. Apply learned patterns from "Lessons Learned" section if present
+5. Follow the guidelines from "SQL Generation Guidelines" section if present
 
 Provide the corrected SQL query along with an explanation of what was fixed.
 """

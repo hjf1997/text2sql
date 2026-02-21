@@ -20,17 +20,19 @@ logger = setup_logger(__name__)
 class QueryUnderstanding:
     """Analyzes user queries to identify required tables and columns."""
 
-    def __init__(self, schema: Schema, ambiguity_threshold: Optional[float] = None):
+    def __init__(self, schema: Schema, ambiguity_threshold: Optional[float] = None, apply_memory: bool = True):
         """Initialize query understanding.
 
         Args:
             schema: Database schema
             ambiguity_threshold: Similarity threshold for detecting ambiguous tables (0.0-1.0)
+            apply_memory: Whether to apply learned lessons (default: True)
         """
         self.schema = schema
         self.ambiguity_threshold = ambiguity_threshold or settings.get(
             "agent.table_ambiguity_threshold", 0.7
         )
+        self.apply_memory = apply_memory
 
     def analyze(
         self,
@@ -60,6 +62,15 @@ class QueryUnderstanding:
         logger.info(f"Analyzing query: {user_query}")
 
         try:
+            # Retrieve LLM-guided lessons for table identification
+            llm_guided_lessons = []
+            if self.apply_memory:
+                from ..memory import lesson_repository
+                llm_guided_lessons = lesson_repository.get_llm_guided_lessons(
+                    scope="table_identification"
+                )
+                logger.info(f"Retrieved {len(llm_guided_lessons)} LLM-guided lessons for table identification")
+
             # Apply corrections first to filter tables
             tables_to_evaluate, has_table_corrections = self._filter_tables_by_corrections(session)
 
@@ -82,7 +93,8 @@ class QueryUnderstanding:
                     prompt = PromptTemplates.table_relevance_evaluation(
                         user_query=user_query,
                         table=table,
-                        already_selected_tables=candidate_tables
+                        already_selected_tables=candidate_tables,
+                        lessons=llm_guided_lessons
                     )
 
                     # Call LLM for structured output
